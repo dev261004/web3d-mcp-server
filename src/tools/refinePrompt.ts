@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { refinePrompt } from "../services/promptRefiner.js";
 import { createToolResult } from "../utils/toolPayload.js";
 
 export const refinePromptTool = {
@@ -9,8 +10,18 @@ Refine a user's request for creating a 3D scene.
 Your job:
 - Understand the user's intent clearly
 - Identify the purpose (advertisement, website, showcase, etc.)
-- Extract style hints (premium, minimal, futuristic, etc.)
+- Extract typed design tokens
 - Detect if animation is implied
+
+Return these structured fields when possible:
+- use_case
+- theme / style
+- material_preset
+- animation
+- lighting_preset
+- background_preset
+- composition
+- object_hints
 
 Rules:
 - Do NOT generate objects here
@@ -25,23 +36,6 @@ Return a refined prompt and structured context for the next step.
   }),
 
   async execute({ user_prompt }: { user_prompt: string }) {
-    // Basic logic (we improve later)
-
-    let use_case = "unknown";
-
-    if (user_prompt.toLowerCase().includes("ad")) {
-      use_case = "advertisement";
-    } else if (user_prompt.toLowerCase().includes("website")) {
-      use_case = "website";
-    }
-
-    return createToolResult({
-      refined_prompt: user_prompt,
-      context: {
-        use_case,
-        style: undefined,
-        animation: undefined
-      }
-    });
+    return createToolResult(refinePrompt(user_prompt));
   }
 };

@@ -1,3 +1,5 @@
+import type { DesignTokens } from "./designTokens.js";
+
 export type Vector3 = [number, number, number];
 
 export interface Material {
@@ -30,7 +32,7 @@ export interface Light {
 export interface Animation {
   id: string;
   target: string;
-  type: "rotation" | "float";
+  type: "rotation" | "float" | "bounce";
   axis?: "x" | "y" | "z";
   speed: number;
   loop: boolean;
@@ -43,6 +45,7 @@ export interface SceneData {
     title: string;
     use_case: string;
     style: string;
+    design_tokens?: DesignTokens;
     created_at: string;
   };
 

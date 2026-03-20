@@ -23,5 +23,15 @@ export function createAnimation(targetId: string, type: string): Animation | nul
     };
   }
 
+  if (type === "bounce") {
+    return {
+      id: uuidv4(),
+      target: targetId,
+      type: "bounce",
+      speed: 0.6,
+      loop: true
+    };
+  }
+
   return null;
 }

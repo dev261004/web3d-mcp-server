@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { buildScene } from "../services/sceneBuilder.js";
+import { designTokensSchema, normalizeDesignTokens } from "../types/designTokens.js";
 import { createToolResult, unwrapToolPayload } from "../utils/toolPayload.js";
 
 function normalizeScenePlan(scenePlan: unknown) {
@@ -11,9 +12,10 @@ function normalizeScenePlan(scenePlan: unknown) {
 
     return parsedPlan as {
         objects?: unknown;
-        style?: string;
-        use_case?: string;
-        animation?: string;
+        style?: unknown;
+        use_case?: unknown;
+        animation?: unknown;
+        design_tokens?: unknown;
     };
 }
 
@@ -31,28 +33,45 @@ Rules:
 - Use provided objects exactly
 - First object is the main subject
 - Apply style and animation as given
+- Consume design_tokens directly when present
 
 This tool is deterministic and does not interpret intent.
 `,
     parameters: z.object({
         scene_plan: z.object({
             objects: z.array(z.string()).min(1).max(3),
-            style: z.string(),
+            style: z.string().optional(),
             animation: z.string().optional(),
-            use_case: z.string()
+            use_case: z.string().optional(),
+            design_tokens: designTokensSchema.partial().optional()
         })
     }),
 
     async execute({ scene_plan }: any) {
         const normalizedPlan = normalizeScenePlan(scene_plan);
+        const objects = Array.isArray(normalizedPlan.objects)
+            ? [...new Set(normalizedPlan.objects.filter((value): value is string => typeof value === "string").map((value) => value.trim()).filter(Boolean))]
+            : [];
+        const designTokens = normalizeDesignTokens(normalizedPlan.design_tokens, {
+            use_case: normalizedPlan.use_case,
+            style: normalizedPlan.style,
+            animation: normalizedPlan.animation
+        });
 
-        if (!Array.isArray(normalizedPlan.objects) || normalizedPlan.objects.length === 0) {
+        if (objects.length === 0) {
             throw new Error("Scene plan must include at least one object");
         }
-        if (normalizedPlan.objects.length > 3) {
+        if (objects.length > 3) {
             throw new Error("Maximum 3 objects allowed");
         }
-        const scene = buildScene(normalizedPlan);
+        const scene = buildScene({
+            ...normalizedPlan,
+            objects,
+            style: designTokens.theme,
+            use_case: designTokens.use_case,
+            animation: designTokens.animation,
+            design_tokens: designTokens
+        });
 
         return createToolResult({
             scene_data: scene

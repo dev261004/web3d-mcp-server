@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createScenePlan } from "../services/scenePlanner.js";
+import { THEME_VALUES, normalizeDesignTokens } from "../types/designTokens.js";
 import { createToolResult, unwrapToolPayload } from "../utils/toolPayload.js";
 
 export const generateScenePlanTool = {
@@ -10,6 +11,7 @@ Create a structured 3D scene plan from the refined prompt.
 Your job:
 - Identify the main object(s) in the scene
 - Extract style, environment, and animation intent
+- Reuse upstream design tokens and object hints when provided
 
 Rules:
 - Include 1 to 3 objects MAXIMUM
@@ -18,6 +20,7 @@ Rules:
   (e.g., "glowing", "stylish", "background" are NOT objects)
 - Do NOT repeat objects
 - Choose ONE primary object (first in list)
+- Do NOT reinterpret style tokens if structured context already includes them
 
 id="hero_rule"
 Rules:
@@ -82,6 +85,11 @@ Return ONLY structured scene plan.
   async execute({ refined_prompt, context }: any) {
     const normalizedPrompt = unwrapToolPayload<string>(refined_prompt, "refined_prompt");
     const normalizedContext = unwrapToolPayload<Record<string, unknown>>(context, "context");
+    const designTokens = normalizeDesignTokens(normalizedContext?.design_tokens, {
+      use_case: normalizedContext?.use_case,
+      style: normalizedContext?.style,
+      animation: normalizedContext?.animation
+    });
     const scenePlan = createScenePlan(normalizedPrompt, normalizedContext);
 
     // enforce rules
@@ -89,16 +97,17 @@ Return ONLY structured scene plan.
       ? [...new Set(scenePlan.objects)].slice(0, 3)
       : ["product"];
 
-    const allowedStyles = ["premium", "minimal", "futuristic", "playful", "dark"];
+    const allowedStyles = [...THEME_VALUES];
 
     if (!allowedStyles.includes(scenePlan.style)) {
-      scenePlan.style = "default";
+      scenePlan.style = designTokens.theme;
     }
 
     return createToolResult({
       scene_plan: {
         ...scenePlan,
-        objects
+        objects,
+        design_tokens: designTokens
       }
     });
   }

@@ -21,12 +21,14 @@ export function generateR3FCode(scene: any) {
   const objectsCode = objects.map((obj: any, index: number) => {
     const position = `[${obj.position}]`;
     const scale = `[${obj.scale}]`;
+    const refProp = index === 0 && animations && animations.length > 0 ? "ref={ref}" : "";
 
     // 🟢 Model
     if (obj.type === "model" && obj.asset) {
       return `
 <primitive 
   object={useGLTF("/models/${obj.asset}").scene} 
+  ${refProp}
   position={${position}} 
   scale={${scale}} 
 />`;
@@ -41,7 +43,7 @@ export function generateR3FCode(scene: any) {
       if (obj.shape === "cylinder") geometry = "<cylinderGeometry />";
 
       return `
-<mesh position={${position}} scale={${scale}}>
+<mesh ${refProp} position={${position}} scale={${scale}}>
   ${geometry}
   <meshStandardMaterial color="${obj.material.color}" />
 </mesh>`;
@@ -68,6 +70,14 @@ useFrame((state) => {
       animationCode = `
 useFrame(() => {
   ref.current.rotation.y += 0.01;
+});`;
+    }
+
+    if (anim.type === "bounce") {
+      animationCode = `
+useFrame((state) => {
+  const t = state.clock.getElapsedTime();
+  ref.current.position.y = Math.abs(Math.sin(t * 2)) * 0.25;
 });`;
     }
   }
