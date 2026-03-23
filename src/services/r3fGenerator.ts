@@ -1,11 +1,55 @@
 import { isAssetConfirmed } from "./assetService.js";
-import { Animation, SceneData, SceneObject } from "../types/scene.js";
+import { Animation, Material, SceneData, SceneObject } from "../types/scene.js";
 
 export type R3FTypingMode = "none" | "typescript" | "prop-types";
+export type R3FFramework = "nextjs" | "vite" | "plain";
 
 export interface GenerateR3FOptions {
   typing?: R3FTypingMode;
+  framework?: R3FFramework;
 }
+
+// ---------------------------------------------------------------------------
+// Material classification helpers
+// ---------------------------------------------------------------------------
+
+type MaterialCategory = "transmission" | "physical" | "emissive" | "standard";
+
+function classifyMaterial(material: Material): MaterialCategory {
+  // Glass / transmission materials → MeshTransmissionMaterial (drei)
+  if (
+    material.type === "glass" ||
+    (typeof material.transmission === "number" && material.transmission > 0)
+  ) {
+    return "transmission";
+  }
+
+  // Metal / chrome / high-metalness → meshPhysicalMaterial
+  if (
+    material.type === "metal" ||
+    (typeof material.metalness === "number" && material.metalness >= 0.8)
+  ) {
+    return "physical";
+  }
+
+  // Neon / emissive-heavy → meshStandardMaterial + emissive (+ optional pointLight)
+  if (
+    typeof material.emissiveIntensity === "number" &&
+    material.emissiveIntensity > 0.5
+  ) {
+    return "emissive";
+  }
+
+  return "standard";
+}
+
+function sceneUsesTransmission(scene: SceneData): boolean {
+  return scene.objects.some((obj) => classifyMaterial(obj.material) === "transmission");
+}
+
+// ---------------------------------------------------------------------------
+// Animation helpers
+// ---------------------------------------------------------------------------
 
 function getAnimatedObjectIdSet(objects: SceneObject[], animations: Animation[]) {
   const animatedIds = new Set<string>();
@@ -32,6 +76,10 @@ function getAxisBaseValue(values: number[], axis: "x" | "y" | "z") {
   if (axis === "y") return values[1];
   return values[2];
 }
+
+// ---------------------------------------------------------------------------
+// Geometry helpers
+// ---------------------------------------------------------------------------
 
 function getDefaultSegments(shape: SceneObject["shape"]) {
   if (shape === "sphere") {
@@ -78,6 +126,156 @@ function inferFallbackShape(object: SceneObject): "box" | "sphere" | "cylinder" 
 
   return "box";
 }
+
+// ---------------------------------------------------------------------------
+// Material JSX generation — the translation layer
+// ---------------------------------------------------------------------------
+
+function indent(code: string, spaces: number): string {
+  const pad = " ".repeat(spaces);
+  return code
+    .split("\n")
+    .map((line) => (line.trim() ? pad + line : line))
+    .join("\n");
+}
+
+/**
+ * Generate the JSX for a material based on its classification.
+ * This is the core material translation layer:
+ *   glass_frost / glass → <MeshTransmissionMaterial />
+ *   metal / chrome      → <meshPhysicalMaterial metalness={1} />
+ *   neon / emissive     → <meshStandardMaterial emissive={...} />
+ *   default             → <meshStandardMaterial />
+ */
+function buildMaterialJsx(material: Material, extraIndent: number = 0): string {
+  const category = classifyMaterial(material);
+  const pad = " ".repeat(extraIndent);
+
+  switch (category) {
+    case "transmission": {
+      const props: string[] = [
+        `color="${material.color}"`,
+        `transmission={${material.transmission ?? 0.85}}`,
+        `roughness={${material.roughness ?? 0.1}}`,
+        `thickness={0.5}`,
+        `chromaticAberration={0.03}`,
+        `anisotropy={0.1}`,
+        `distortion={0.0}`,
+        `distortionScale={0.3}`,
+        `temporalDistortion={0.0}`
+      ];
+
+      if (typeof material.metalness === "number") {
+        props.push(`metalness={${material.metalness}}`);
+      }
+
+      if (material.envMapIntensity !== undefined) {
+        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      }
+
+      if (material.emissive) {
+        props.push(`emissive="${material.emissive}"`);
+        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0.3}}`);
+      }
+
+      return `${pad}<MeshTransmissionMaterial\n${props.map((p) => `${pad}  ${p}`).join("\n")}\n${pad}/>`;
+    }
+
+    case "physical": {
+      const props: string[] = [
+        `color="${material.color}"`,
+        `metalness={${material.metalness ?? 1}}`,
+        `roughness={${material.roughness ?? 0.05}}`
+      ];
+
+      if (material.envMapIntensity !== undefined) {
+        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      }
+
+      if (material.emissive) {
+        props.push(`emissive="${material.emissive}"`);
+        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0}}`);
+      }
+
+      if (material.flatShading) {
+        props.push(`flatShading`);
+      }
+
+      return `${pad}<meshPhysicalMaterial ${props.join(" ")} />`;
+    }
+
+    case "emissive": {
+      const props: string[] = [
+        `color="${material.color}"`,
+        `metalness={${material.metalness ?? 0.2}}`,
+        `roughness={${material.roughness ?? 0.1}}`,
+        `emissive="${material.emissive || material.color}"`,
+        `emissiveIntensity={${material.emissiveIntensity ?? 1.0}}`
+      ];
+
+      if (material.envMapIntensity !== undefined) {
+        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      }
+
+      if (material.flatShading) {
+        props.push(`flatShading`);
+      }
+
+      return `${pad}<meshStandardMaterial ${props.join(" ")} />`;
+    }
+
+    case "standard":
+    default: {
+      const props: string[] = [
+        `color="${material.color}"`
+      ];
+
+      if (material.metalness !== undefined) {
+        props.push(`metalness={${material.metalness}}`);
+      }
+
+      if (material.roughness !== undefined) {
+        props.push(`roughness={${material.roughness}}`);
+      }
+
+      if (material.emissive) {
+        props.push(`emissive="${material.emissive}"`);
+        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0}}`);
+      }
+
+      if (material.envMapIntensity !== undefined) {
+        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      }
+
+      if (material.flatShading) {
+        props.push(`flatShading`);
+      }
+
+      return `${pad}<meshStandardMaterial ${props.join(" ")} />`;
+    }
+  }
+}
+
+/**
+ * For neon/emissive materials, optionally emit a companion pointLight
+ * to simulate glow bleeding onto nearby surfaces.
+ */
+function buildEmissiveGlowLight(object: SceneObject): string {
+  const category = classifyMaterial(object.material);
+  if (category !== "emissive") {
+    return "";
+  }
+
+  const glowColor = object.material.emissive || object.material.color;
+  const intensity = Math.min((object.material.emissiveIntensity ?? 1.0) * 0.4, 1.5);
+  const [x, y, z] = object.position;
+
+  return `      <pointLight position={[${x}, ${y}, ${z}]} color="${glowColor}" intensity={${intensity.toFixed(2)}} distance={3} decay={2} />`;
+}
+
+// ---------------------------------------------------------------------------
+// Animation hooks
+// ---------------------------------------------------------------------------
 
 function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
   return animations.map((animation) => {
@@ -140,6 +338,10 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
   }).filter(Boolean).join("\n\n");
 }
 
+// ---------------------------------------------------------------------------
+// Light JSX
+// ---------------------------------------------------------------------------
+
 function buildLightJsx(scene: SceneData) {
   return scene.lighting.map((light) => {
     if (light.type === "ambient") {
@@ -158,249 +360,109 @@ function buildLightJsx(scene: SceneData) {
   }).filter(Boolean).join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Object JSX — now uses material translation layer
+// ---------------------------------------------------------------------------
+
 function buildComponentPropString(props: string[]) {
   return props.filter(Boolean).join(" ");
 }
 
 function buildObjectJsx(objects: SceneObject[], animatedObjectIds: Set<string>) {
   return objects.map((object, index) => {
-    const objectRef = animatedObjectIds.has(object.id) ? `objectRef={${getRefName(index)}}` : "";
+    const refProp = animatedObjectIds.has(object.id) ? `ref={${getRefName(index)}}` : "";
     const position = `position={${JSON.stringify(object.position)}}`;
     const scale = `scale={${JSON.stringify(object.scale)}}`;
-    const material = `material={${JSON.stringify(object.material)}}`;
-    const segmentCount = `segmentCount={${resolveSegmentCount(object)}}`;
+    const segmentCount = resolveSegmentCount(object);
+    const materialJsx = buildMaterialJsx(object.material, 8);
+    const glowLight = buildEmissiveGlowLight(object);
 
     if (object.asset && resolveAssetConfirmation(object)) {
       const props = buildComponentPropString([
         `url="/models/${object.asset}"`,
         position,
         scale,
-        objectRef
+        refProp ? `objectRef={${getRefName(index)}}` : ""
       ]);
 
       return `      <AssetModel ${props} />`;
     }
 
     if (object.asset) {
-      const props = buildComponentPropString([
-        `asset="${object.asset}"`,
-        `shape="${inferFallbackShape(object)}"`,
-        position,
-        scale,
-        material,
-        segmentCount,
-        objectRef
-      ]);
+      // Procedural fallback for unconfirmed assets
+      const shape = inferFallbackShape(object);
+      const lines: string[] = [];
 
-      return `      {/* Replace with useGLTF('/models/${object.asset}') when model is available */}\n      <ProceduralAssetFallback ${props} />`;
+      lines.push(`      {/* Replace with useGLTF('/models/${object.asset}') when model is available */}`);
+      lines.push(`      <group ${buildComponentPropString([refProp, position, scale])}>`);
+      lines.push(buildProceduralFallbackJsx(object, shape, segmentCount, materialJsx));
+      lines.push(`      </group>`);
+
+      if (glowLight) {
+        lines.push(glowLight);
+      }
+
+      return lines.join("\n");
     }
 
-    const props = buildComponentPropString([
-      `shape="${inferFallbackShape(object)}"`,
-      position,
-      scale,
-      material,
-      segmentCount,
-      objectRef
-    ]);
+    // Pure primitive
+    const shape = inferFallbackShape(object);
+    const lines: string[] = [];
 
-    return `      <ProceduralMesh ${props} />`;
+    lines.push(`      <mesh ${buildComponentPropString([refProp, position, scale])}>`);
+    lines.push(buildGeometryJsx(shape, segmentCount, 8));
+    lines.push(materialJsx);
+    lines.push(`      </mesh>`);
+
+    if (glowLight) {
+      lines.push(glowLight);
+    }
+
+    return lines.join("\n");
   }).join("\n");
 }
 
-function buildTypeDefinitions(typing: R3FTypingMode) {
-  if (typing !== "typescript") {
-    return "";
-  }
-
-  return `
-type Vector3Tuple = [number, number, number];
-type MeshShape = "box" | "sphere" | "cylinder";
-type ObjectRef = any;
-
-type MaterialConfig = {
-  type: "glass" | "metal" | "matte" | "standard";
-  color: string;
-  metalness?: number;
-  roughness?: number;
-  transmission?: number;
-  emissive?: string;
-  emissiveIntensity?: number;
-  flatShading?: boolean;
-  envMapIntensity?: number;
-};
-
-interface MaterialLayerProps {
-  material: MaterialConfig;
-}
-
-interface ProceduralMeshProps {
-  shape: MeshShape;
-  position: Vector3Tuple;
-  scale: Vector3Tuple;
-  material: MaterialConfig;
-  segmentCount?: number;
-  objectRef?: ObjectRef;
-}
-
-interface AssetModelProps {
-  url: string;
-  position: Vector3Tuple;
-  scale: Vector3Tuple;
-  objectRef?: ObjectRef;
-}
-
-interface ProceduralAssetFallbackProps extends ProceduralMeshProps {
-  asset: string;
-}
-`;
-}
-
-function buildPropTypesBlock(typing: R3FTypingMode, hasConfirmedAssets: boolean) {
-  if (typing !== "prop-types") {
-    return "";
-  }
-
-  return `
-const vector3PropType = PropTypes.arrayOf(PropTypes.number).isRequired;
-const objectRefPropType = PropTypes.oneOfType([
-  PropTypes.func,
-  PropTypes.shape({ current: PropTypes.any })
-]);
-const materialPropType = PropTypes.shape({
-  type: PropTypes.oneOf(["glass", "metal", "matte", "standard"]).isRequired,
-  color: PropTypes.string.isRequired,
-  metalness: PropTypes.number,
-  roughness: PropTypes.number,
-  transmission: PropTypes.number,
-  emissive: PropTypes.string,
-  emissiveIntensity: PropTypes.number,
-  flatShading: PropTypes.bool,
-  envMapIntensity: PropTypes.number
-}).isRequired;
-
-MaterialLayer.propTypes = {
-  material: materialPropType
-};
-
-ProceduralMesh.propTypes = {
-  shape: PropTypes.oneOf(["box", "sphere", "cylinder"]).isRequired,
-  position: vector3PropType,
-  scale: vector3PropType,
-  material: materialPropType,
-  segmentCount: PropTypes.number,
-  objectRef: objectRefPropType
-};
-
-ProceduralAssetFallback.propTypes = {
-  asset: PropTypes.string.isRequired,
-  shape: PropTypes.oneOf(["box", "sphere", "cylinder"]).isRequired,
-  position: vector3PropType,
-  scale: vector3PropType,
-  material: materialPropType,
-  segmentCount: PropTypes.number,
-  objectRef: objectRefPropType
-};
-${hasConfirmedAssets ? `
-AssetModel.propTypes = {
-  url: PropTypes.string.isRequired,
-  position: vector3PropType,
-  scale: vector3PropType,
-  objectRef: objectRefPropType
-};` : ""}
-`;
-}
-
-function buildSharedComponentBlock(typing: R3FTypingMode, hasConfirmedAssets: boolean) {
-  const materialPropsType = typing === "typescript" ? ": MaterialLayerProps" : "";
-  const meshPropsType = typing === "typescript" ? ": ProceduralMeshProps" : "";
-  const assetPropsType = typing === "typescript" ? ": AssetModelProps" : "";
-  const fallbackPropsType = typing === "typescript" ? ": ProceduralAssetFallbackProps" : "";
-
-  return `
-function MaterialLayer({ material }${materialPropsType}) {
-  const materialProps = {
-    color: material.color,
-    metalness: material.metalness,
-    roughness: material.roughness,
-    envMapIntensity: material.envMapIntensity,
-    emissive: material.emissive,
-    emissiveIntensity: material.emissiveIntensity,
-    flatShading: material.flatShading
-  };
-
-  if (material.type === "glass" || typeof material.transmission === "number") {
-    return (
-      <meshPhysicalMaterial
-        {...materialProps}
-        transmission={material.transmission ?? 0.5}
-        transparent
-      />
-    );
-  }
-
-  return <meshStandardMaterial {...materialProps} />;
-}
-
-function ProceduralMesh({
-  shape,
-  position,
-  scale,
-  material,
-  segmentCount = 1,
-  objectRef
-}${meshPropsType}) {
+function buildGeometryJsx(shape: "box" | "sphere" | "cylinder", segmentCount: number, padSpaces: number): string {
+  const pad = " ".repeat(padSpaces);
   const roundedSegments = Math.max(1, Math.round(segmentCount));
-  const sphereWidthSegments = Math.max(8, roundedSegments);
-  const sphereHeightSegments = Math.max(6, Math.round(sphereWidthSegments / 2));
-  const cylinderSegments = Math.max(8, roundedSegments);
 
-  return (
-    <mesh ref={objectRef} position={position} scale={scale}>
-      {shape === "sphere" ? (
-        <sphereGeometry args={[1, sphereWidthSegments, sphereHeightSegments]} />
-      ) : shape === "cylinder" ? (
-        <cylinderGeometry args={[0.65, 0.65, 1.6, cylinderSegments]} />
-      ) : (
-        <boxGeometry args={[1, 1, 1, roundedSegments, roundedSegments, roundedSegments]} />
-      )}
-      <MaterialLayer material={material} />
-    </mesh>
-  );
+  if (shape === "sphere") {
+    const widthSeg = Math.max(8, roundedSegments);
+    const heightSeg = Math.max(6, Math.round(widthSeg / 2));
+    return `${pad}<sphereGeometry args={[1, ${widthSeg}, ${heightSeg}]} />`;
+  }
+
+  if (shape === "cylinder") {
+    const cylSeg = Math.max(8, roundedSegments);
+    return `${pad}<cylinderGeometry args={[0.65, 0.65, 1.6, ${cylSeg}]} />`;
+  }
+
+  return `${pad}<boxGeometry args={[1, 1, 1, ${roundedSegments}, ${roundedSegments}, ${roundedSegments}]} />`;
 }
 
-${hasConfirmedAssets ? `
-function AssetModel({ url, position, scale, objectRef }${assetPropsType}) {
-  const gltf = useGLTF(url);
-  const modelScene = useMemo(() => gltf.scene.clone(), [gltf.scene]);
+function buildProceduralFallbackJsx(object: SceneObject, shape: "box" | "sphere" | "cylinder", segmentCount: number, materialJsx: string): string {
+  const assetName = object.asset || "";
 
-  return (
-    <primitive
-      ref={objectRef}
-      object={modelScene}
-      position={position}
-      scale={scale}
-      dispose={null}
-    />
-  );
-}` : ""}
+  if (/smartphone|phone/i.test(assetName)) {
+    return buildSmartphoneFallback(object.material);
+  }
 
-function ProceduralAssetFallback({
-  asset,
-  shape,
-  position,
-  scale,
-  material,
-  segmentCount = 24,
-  objectRef
-}${fallbackPropsType}) {
-  if (/smartphone|phone/i.test(asset)) {
-    // Replace with useGLTF('/models/smartphone.glb') when model is available
-    return (
-      <group ref={objectRef} position={position} scale={scale}>
+  // Generic fallback
+  const lines: string[] = [];
+  lines.push(`        <mesh>`);
+  lines.push(buildGeometryJsx(shape, segmentCount, 10));
+  lines.push(indent(materialJsx, 2));
+  lines.push(`        </mesh>`);
+  return lines.join("\n");
+}
+
+function buildSmartphoneFallback(material: Material): string {
+  const bodyMaterialJsx = buildMaterialJsx(material, 10);
+
+  return `        {/* Smartphone procedural fallback */}
         <mesh scale={[0.95, 1.8, 0.12]}>
           <boxGeometry args={[1, 1, 1, 4, 8, 1]} />
-          <MaterialLayer material={material} />
+${bodyMaterialJsx}
         </mesh>
         <mesh position={[0, 0, 0.07]} scale={[0.84, 1.55, 0.02]}>
           <boxGeometry args={[1, 1, 1]} />
@@ -421,39 +483,129 @@ function ProceduralAssetFallback({
         <mesh position={[-0.12, 0.67, 0.08]} scale={[0.07, 0.07, 0.04]}>
           <sphereGeometry args={[1, 18, 18]} />
           <meshStandardMaterial color="#0b1020" roughness={0.25} metalness={0.25} />
-        </mesh>
-      </group>
-    );
+        </mesh>`;
+}
+
+// ---------------------------------------------------------------------------
+// Type definitions
+// ---------------------------------------------------------------------------
+
+function buildTypeDefinitions(typing: R3FTypingMode) {
+  if (typing !== "typescript") {
+    return "";
   }
 
-  return (
-    <ProceduralMesh
-      shape={shape}
-      position={position}
-      scale={scale}
-      material={material}
-      segmentCount={segmentCount}
-      objectRef={objectRef}
-    />
-  );
+  return `
+import type { Mesh, Group } from "three";
+
+type Vector3Tuple = [number, number, number];
+type MeshShape = "box" | "sphere" | "cylinder";
+
+type MaterialConfig = {
+  type: "glass" | "metal" | "matte" | "standard";
+  color: string;
+  metalness?: number;
+  roughness?: number;
+  transmission?: number;
+  emissive?: string;
+  emissiveIntensity?: number;
+  flatShading?: boolean;
+  envMapIntensity?: number;
+};
+
+interface AssetModelProps {
+  url: string;
+  position: Vector3Tuple;
+  scale: Vector3Tuple;
+  objectRef?: React.MutableRefObject<Group | null>;
 }
 `;
 }
 
-function buildImports(hasConfirmedAssets: boolean, hasAnimations: boolean, typing: R3FTypingMode) {
+function buildPropTypesBlock(typing: R3FTypingMode, hasConfirmedAssets: boolean) {
+  if (typing !== "prop-types") {
+    return "";
+  }
+
+  return `
+const vector3PropType = PropTypes.arrayOf(PropTypes.number).isRequired;
+const objectRefPropType = PropTypes.oneOfType([
+  PropTypes.func,
+  PropTypes.shape({ current: PropTypes.any })
+]);
+${hasConfirmedAssets ? `
+AssetModel.propTypes = {
+  url: PropTypes.string.isRequired,
+  position: vector3PropType,
+  scale: vector3PropType,
+  objectRef: objectRefPropType
+};` : ""}
+`;
+}
+
+// ---------------------------------------------------------------------------
+// Shared component blocks
+// ---------------------------------------------------------------------------
+
+function buildSharedComponentBlock(typing: R3FTypingMode, hasConfirmedAssets: boolean) {
+  const assetPropsType = typing === "typescript" ? ": AssetModelProps" : "";
+
+  const blocks: string[] = [];
+
+  if (hasConfirmedAssets) {
+    blocks.push(`
+function AssetModel({ url, position, scale, objectRef }${assetPropsType}) {
+  const gltf = useGLTF(url);
+  const modelScene = useMemo(() => gltf.scene.clone(), [gltf.scene]);
+
+  return (
+    <primitive
+      ref={objectRef}
+      object={modelScene}
+      position={position}
+      scale={scale}
+      dispose={null}
+    />
+  );
+}`);
+  }
+
+  return blocks.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Imports
+// ---------------------------------------------------------------------------
+
+function buildImports(
+  hasConfirmedAssets: boolean,
+  hasAnimations: boolean,
+  hasTransmission: boolean,
+  typing: R3FTypingMode
+) {
   const reactImports = [
     hasConfirmedAssets ? "Suspense" : "",
     hasConfirmedAssets ? "useMemo" : "",
     hasAnimations ? "useRef" : ""
   ].filter(Boolean);
+
   const fiberImports = ["Canvas", hasAnimations ? "useFrame" : ""].filter(Boolean);
+
+  const dreiImports: string[] = [];
+  if (hasConfirmedAssets) {
+    dreiImports.push("useGLTF");
+  }
+  if (hasTransmission) {
+    dreiImports.push("MeshTransmissionMaterial");
+  }
+
   const importLines = [
     reactImports.length > 0 ? `import { ${reactImports.join(", ")} } from "react";` : "",
     `import { ${fiberImports.join(", ")} } from "@react-three/fiber";`
   ].filter(Boolean);
 
-  if (hasConfirmedAssets) {
-    importLines.push(`import { useGLTF } from "@react-three/drei";`);
+  if (dreiImports.length > 0) {
+    importLines.push(`import { ${dreiImports.join(", ")} } from "@react-three/drei";`);
   }
 
   if (typing === "prop-types") {
@@ -463,26 +615,38 @@ function buildImports(hasConfirmedAssets: boolean, hasAnimations: boolean, typin
   return importLines.join("\n");
 }
 
+// ---------------------------------------------------------------------------
+// Main export
+// ---------------------------------------------------------------------------
+
 export function generateR3FCode(scene: SceneData, options: GenerateR3FOptions = {}) {
   const typing = options.typing ?? "none";
+  const framework = options.framework ?? "plain";
   const animationList = Array.isArray(scene.animations) ? scene.animations : [];
   const animatedObjectIds = getAnimatedObjectIdSet(scene.objects, animationList);
   const hasAnimations = animationList.length > 0;
   const hasConfirmedAssets = scene.objects.some((object) => object.asset && resolveAssetConfirmation(object));
+  const hasTransmission = sceneUsesTransmission(scene);
+
+  const refType = typing === "typescript" ? "<Mesh | Group | null>" : "";
   const refDeclarations = scene.objects
     .map((object, index) => {
-      return animatedObjectIds.has(object.id) ? `  const ${getRefName(index)} = useRef(null);` : "";
+      return animatedObjectIds.has(object.id) ? `  const ${getRefName(index)} = useRef${refType}(null);` : "";
     })
     .filter(Boolean)
     .join("\n");
+
   const animationHooks = buildAnimationHooks(scene.objects, animationList);
   const lightsCode = buildLightJsx(scene);
   const objectsCode = buildObjectJsx(scene.objects, animatedObjectIds);
   const background = scene.environment?.background?.value || "#ffffff";
-  const imports = buildImports(hasConfirmedAssets, hasAnimations, typing);
+  const imports = buildImports(hasConfirmedAssets, hasAnimations, hasTransmission, typing);
   const typeDefinitions = buildTypeDefinitions(typing);
   const sharedComponents = buildSharedComponentBlock(typing, hasConfirmedAssets);
   const propTypesBlock = buildPropTypesBlock(typing, hasConfirmedAssets);
+
+  const useClientDirective = framework === "nextjs" ? `"use client";\n\n` : "";
+
   const sceneContent = `function SceneContent() {
 ${refDeclarations || ""}
 ${animationHooks ? `\n${animationHooks}\n` : ""}
@@ -493,13 +657,14 @@ ${objectsCode}
     </>
   );
 }`;
+
   const canvasChildren = hasConfirmedAssets
     ? `      <Suspense fallback={null}>
         <SceneContent />
       </Suspense>`
     : `      <SceneContent />`;
 
-  return `${imports}
+  return `${useClientDirective}${imports}
 ${typeDefinitions}
 ${sharedComponents}
 ${propTypesBlock}

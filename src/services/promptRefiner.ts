@@ -493,6 +493,126 @@ function buildRefinedPrompt(userPrompt: string, designTokens: DesignTokens, conf
   ].join(", ");
 }
 
+// ---------------------------------------------------------------------------
+// Color vocabulary extraction
+// ---------------------------------------------------------------------------
+
+export interface ColorHint {
+  name: string;
+  hex: string;
+  role: "background" | "accent" | "general";
+}
+
+const COLOR_VOCABULARY: Record<string, string> = {
+  // Blues / Navy
+  "deep navy": "#0a1628",
+  "dark navy": "#0a1628",
+  navy: "#0a1628",
+  "midnight blue": "#0f1b3d",
+  "dark blue": "#0f1b3d",
+  cobalt: "#1a3a6b",
+  // Cyans / Teals
+  "bright cyan": "#00e5ff",
+  cyan: "#00e5ff",
+  teal: "#008080",
+  aqua: "#00ffff",
+  turquoise: "#40e0d0",
+  // Greens
+  "bright emerald": "#34d399",
+  "dark emerald": "#065f46",
+  emerald: "#34d399",
+  "dark green": "#166534",
+  green: "#22c55e",
+  lime: "#84cc16",
+  mint: "#a7f3d0",
+  // Purples
+  "deep purple": "#4c1d95",
+  purple: "#7c3aed",
+  violet: "#8b5cf6",
+  lavender: "#c4b5fd",
+  magenta: "#d946ef",
+  // Reds / Pinks
+  "dark red": "#991b1b",
+  red: "#ef4444",
+  crimson: "#dc2626",
+  coral: "#f97316",
+  pink: "#ec4899",
+  rose: "#f43f5e",
+  // Oranges / Yellows
+  orange: "#f97316",
+  amber: "#f59e0b",
+  gold: "#eab308",
+  yellow: "#facc15",
+  // Neutrals
+  "jet black": "#0a0a0a",
+  black: "#000000",
+  charcoal: "#1f2937",
+  slate: "#334155",
+  gray: "#6b7280",
+  grey: "#6b7280",
+  silver: "#c0c0c0",
+  "off-white": "#f5f5f0",
+  white: "#ffffff",
+  ivory: "#fffff0",
+  cream: "#fef3c7"
+};
+
+const COLOR_ROLE_KEYWORDS: Record<string, "background" | "accent"> = {
+  background: "background",
+  backdrop: "background",
+  "bg color": "background",
+  accent: "accent",
+  accents: "accent",
+  highlight: "accent",
+  highlights: "accent",
+  glow: "accent",
+  pop: "accent"
+};
+
+export function extractColorHints(userPrompt: string): ColorHint[] {
+  const normalizedPrompt = normalizeText(userPrompt);
+  const hints: ColorHint[] = [];
+  const usedColors = new Set<string>();
+
+  // Sort by length descending so "deep navy" matches before "navy"
+  const colorEntries = Object.entries(COLOR_VOCABULARY).sort(
+    (a, b) => b[0].length - a[0].length
+  );
+
+  for (const [colorName, hex] of colorEntries) {
+    const pattern = new RegExp(`\\b${escapeRegExp(colorName)}\\b`, "g");
+    const matches = normalizedPrompt.match(pattern);
+
+    if (!matches || matches.length === 0) {
+      continue;
+    }
+
+    if (usedColors.has(hex)) {
+      continue;
+    }
+
+    usedColors.add(hex);
+
+    // Determine role by checking surrounding context
+    let role: ColorHint["role"] = "general";
+
+    for (const [roleKeyword, roleValue] of Object.entries(COLOR_ROLE_KEYWORDS)) {
+      const rolePattern = new RegExp(
+        `\\b${escapeRegExp(roleKeyword)}\\b.{0,20}\\b${escapeRegExp(colorName)}\\b|\\b${escapeRegExp(colorName)}\\b.{0,20}\\b${escapeRegExp(roleKeyword)}\\b`
+      );
+
+      if (rolePattern.test(normalizedPrompt)) {
+        role = roleValue;
+        break;
+      }
+    }
+
+    hints.push({ name: colorName, hex, role });
+  }
+
+  return hints;
+}
+
 export function refinePrompt(userPrompt: string) {
   const normalizedPrompt = normalizeText(userPrompt);
 
@@ -516,6 +636,7 @@ export function refinePrompt(userPrompt: string) {
 
   const objectHints = extractObjectHints(userPrompt);
   const confirmedObjects = extractConfirmedObjects(userPrompt);
+  const colorHints = extractColorHints(userPrompt);
 
   return {
     refined_prompt: buildRefinedPrompt(userPrompt, designTokens, confirmedObjects),
@@ -525,7 +646,8 @@ export function refinePrompt(userPrompt: string) {
       animation: designTokens.animation,
       design_tokens: designTokens,
       object_hints: objectHints,
-      confirmed_objects: confirmedObjects
+      confirmed_objects: confirmedObjects,
+      color_hints: colorHints
     }
   };
 }

@@ -10,6 +10,7 @@ import {
     ThemeToken,
     normalizeDesignTokens
 } from "../types/designTokens.js";
+import type { ColorHint } from "./promptRefiner.js";
 
 function normalizeStyleText(value?: string) {
     return typeof value === "string" ? value.toLowerCase() : "";
@@ -40,7 +41,8 @@ function getBackgroundColor(
     theme: ThemeToken,
     lightingPreset: LightingPresetToken,
     materialPreset: MaterialPresetToken,
-    rawStyle?: string
+    rawStyle?: string,
+    colorHints?: ColorHint[]
 ) {
     const normalizedStyle = normalizeStyleText(rawStyle);
     const favorsDeepBackdrop =
@@ -49,6 +51,20 @@ function getBackgroundColor(
         normalizedStyle.includes("cinematic") ||
         normalizedStyle.includes("fintech") ||
         materialPreset === "glass_frost";
+
+    // If user specified background colors, prioritize them
+    const backgroundHint = colorHints?.find((hint) => hint.role === "background");
+    if (backgroundHint) {
+        return backgroundHint.hex;
+    }
+
+    // If user specified any color hints and the theme is dark, use their accent color
+    // as a dark background option
+    const accentHint = colorHints?.find((hint) => hint.role === "accent");
+    if (accentHint && (theme === "dark" || favorsDeepBackdrop)) {
+        // Darken the accent color for background use
+        return darkenColor(accentHint.hex, 0.7);
+    }
 
     switch (preset) {
         case "dark_studio":
@@ -61,6 +77,25 @@ function getBackgroundColor(
         default:
             return "#f7f7f4";
     }
+}
+
+function darkenColor(hex: string, factor: number): string {
+    // Parse hex
+    let r = parseInt(hex.slice(1, 3), 16);
+    let g = parseInt(hex.slice(3, 5), 16);
+    let b = parseInt(hex.slice(5, 7), 16);
+
+    // Apply darkening factor
+    r = Math.round(r * factor);
+    g = Math.round(g * factor);
+    b = Math.round(b * factor);
+
+    // Ensure minimum darkness
+    r = Math.max(r, 10);
+    g = Math.max(g, 10);
+    b = Math.max(b, 10);
+
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
 }
 
 function createLightingRig(
@@ -198,6 +233,7 @@ export function buildScene(plan: any): SceneData {
         animation: plan?.animation
     });
     const rawStyle = typeof plan?.style === "string" ? plan.style : undefined;
+    const colorHints = Array.isArray(plan?.color_hints) ? plan.color_hints : [];
 
     const objects: SceneObject[] = [];
     const notes: string[] = [];
@@ -264,7 +300,8 @@ export function buildScene(plan: any): SceneData {
                     designTokens.theme,
                     designTokens.lighting_preset,
                     designTokens.material_preset,
-                    rawStyle
+                    rawStyle,
+                    colorHints
                 )
             }
         },

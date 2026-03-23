@@ -17,6 +17,7 @@ function normalizeScenePlan(scenePlan: unknown) {
         use_case?: unknown;
         animation?: unknown;
         design_tokens?: unknown;
+        color_hints?: unknown;
     };
 }
 
@@ -28,6 +29,8 @@ Generate a complete 3D scene from a structured scene plan.
 Your job:
 - Convert the scene plan into structured scene data
 - Drive materials, lighting, background, and layout from design_tokens when present
+- Apply user-specified color hints to background and accent colors
+- Propagate design_tokens through to scene_data.metadata for downstream tools
 
 Rules:
 - Do NOT modify the scene plan
@@ -45,7 +48,12 @@ This tool is deterministic and does not interpret intent.
             style: z.string().optional(),
             animation: z.string().optional(),
             use_case: z.string().optional(),
-            design_tokens: designTokensSchema.partial().optional()
+            design_tokens: designTokensSchema.partial().optional(),
+            color_hints: z.array(z.object({
+                name: z.string(),
+                hex: z.string(),
+                role: z.enum(["background", "accent", "general"])
+            })).optional()
         })
     }),
 
@@ -61,6 +69,18 @@ This tool is deterministic and does not interpret intent.
             animation: normalizedPlan.animation
         });
 
+        const colorHintsRaw = normalizedPlan.color_hints;
+        const colorHints = Array.isArray(colorHintsRaw)
+            ? colorHintsRaw.filter(
+                (hint): hint is { name: string; hex: string; role: "background" | "accent" | "general" } =>
+                    typeof hint === "object" &&
+                    hint !== null &&
+                    typeof hint.name === "string" &&
+                    typeof hint.hex === "string" &&
+                    typeof hint.role === "string"
+              )
+            : [];
+
         if (objects.length === 0) {
             throw new Error("Scene plan must include at least one object");
         }
@@ -73,7 +93,8 @@ This tool is deterministic and does not interpret intent.
             style: rawStyle || designTokens.theme,
             use_case: designTokens.use_case,
             animation: designTokens.animation,
-            design_tokens: designTokens
+            design_tokens: designTokens,
+            color_hints: colorHints
         });
 
         return createToolResult({

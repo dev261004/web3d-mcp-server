@@ -296,7 +296,7 @@ Return structured scene plan data plus warnings and constraints.
       animation: normalizedContext?.animation
     });
     const scenePlan = createScenePlan(normalizedPrompt, normalizedContext);
-    const warnings: string[] = [];
+    let warnings: string[] = scenePlan.warnings ? [...scenePlan.warnings] : [];
     const { style: resolvedStyle, styleSignals, scoredThemes } = pickResolvedStyle(designTokens, normalizedPrompt);
 
     // enforce rules
