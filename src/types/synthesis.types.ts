@@ -80,7 +80,31 @@ export interface AssembledR3FOutput {
   language: "tsx" | "jsx";
   framework: string;
   synthesized_object_count: number;
+  placeholder_object_count?: number;
+  warning?: string;
   scene_id: string;
 }
 
-export type GenerateR3FResult = SynthesisRequiredOutput | AssembledR3FOutput;
+export interface PartialR3FOutput {
+  status: "PARTIAL";
+  warning: string;
+  r3f_code: string;
+  language: "tsx" | "jsx";
+  framework: string;
+  scene_id: string;
+  error?: string;
+  hint?: string;
+}
+
+export interface ErrorR3FOutput {
+  status: "ERROR";
+  error: string;
+  hint: string;
+  scene_id: string | null;
+}
+
+export type GenerateR3FResult =
+  | SynthesisRequiredOutput
+  | AssembledR3FOutput
+  | PartialR3FOutput
+  | ErrorR3FOutput;

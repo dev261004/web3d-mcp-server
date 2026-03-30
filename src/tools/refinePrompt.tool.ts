@@ -23,6 +23,7 @@ Return these structured fields when possible:
 - composition
 - confirmed_objects
 - object_hints
+- discarded_hints
 
 Rules:
 - Do NOT generate objects here

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { FastMCP } from "fastmcp";
+import { detectCategory, normalizeObjectCategory } from "../lib/objectCategories.js";
 import type { SceneData, Vector3 } from "../types/scene.types.js";
 import { createToolResult, unwrapToolPayload } from "../utils/toolPayload.js";
 import type {
@@ -61,18 +62,20 @@ type ShapeSpec =
       kind: "rect";
       width: number;
       height: number;
-      pendingInset: number;
     }
   | {
       kind: "ellipse";
       rx: number;
       ry: number;
-      pendingInset: number;
     }
   | {
       kind: "circle";
       r: number;
-      pendingInset: number;
+    }
+  | {
+      kind: "cluster";
+      radius: number;
+      spread: number;
     };
 
 type ColorReference = {
@@ -187,7 +190,11 @@ function getObjectLabel(object: PreviewSceneData["objects"][number]) {
 }
 
 function hasPendingSynthesis(object: PreviewSceneData["objects"][number]) {
-  return Boolean(object.synthesis_contract);
+  return (
+    object.type === "synthesis_contract" ||
+    object.shape === "SYNTHESIS_REQUIRED" ||
+    object.synthesis_contract?.__type === "SYNTHESIS_REQUIRED"
+  );
 }
 
 function getLightLabel(light: PreviewLight) {
@@ -233,58 +240,88 @@ function projectVector(vector: Vector3 | undefined, view: PreviewView): Projecti
   };
 }
 
+function getObjectBoundingBox(object: PreviewSceneData["objects"][number]) {
+  const renderHints = object.render_hints as { bounding_box?: unknown } | undefined;
+  const candidate =
+    renderHints?.bounding_box ??
+    object.synthesis_contract?.bounding_box;
+
+  if (
+    Array.isArray(candidate) &&
+    candidate.length === 3 &&
+    candidate.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+  ) {
+    return [candidate[0], candidate[1], candidate[2]] as [number, number, number];
+  }
+
+  return [1, 1, 1] as [number, number, number];
+}
+
+function getObjectCategory(object: PreviewSceneData["objects"][number]) {
+  return normalizeObjectCategory(
+    object.synthesis_contract?.category ??
+    detectCategory(getObjectLabel(object))
+  );
+}
+
 function getShapeSpec(object: PreviewSceneData["objects"][number]): ShapeSpec {
-  const signature = `${getObjectLabel(object)} ${object.type}`.toLowerCase();
+  const category = getObjectCategory(object);
+  const [bbWidth, bbHeight, bbDepth] = getObjectBoundingBox(object);
+  const widthPx = clamp(bbWidth * 30, 18, 140);
+  const heightPx = clamp(bbHeight * 30, 10, 120);
+  const depthPx = clamp(bbDepth * 30, 10, 140);
 
-  if (/(robot|character|humanoid)/.test(signature)) {
-    return {
-      kind: "rect",
-      width: 30,
-      height: 55,
-      pendingInset: 6
-    };
-  }
-
-  if (/(phone|mobile)/.test(signature)) {
-    return {
-      kind: "rect",
-      width: 20,
-      height: 38,
-      pendingInset: 6
-    };
-  }
-
-  if (/(bottle|cylinder)/.test(signature)) {
+  if (category === "humanoid") {
     return {
       kind: "ellipse",
-      rx: 12,
-      ry: 24,
-      pendingInset: 6
+      rx: Math.max(10, widthPx * 0.35),
+      ry: Math.max(18, heightPx * 0.5)
     };
   }
 
-  if (/(shoe|sneaker)/.test(signature)) {
-    return {
-      kind: "ellipse",
-      rx: 28,
-      ry: 14,
-      pendingInset: 6
-    };
-  }
-
-  if (/(car|vehicle)/.test(signature)) {
+  if (category === "container") {
     return {
       kind: "rect",
-      width: 70,
-      height: 32,
-      pendingInset: 6
+      width: Math.max(24, widthPx),
+      height: Math.max(14, Math.min(heightPx, widthPx * 0.85))
+    };
+  }
+
+  if (category === "surface") {
+    return {
+      kind: "rect",
+      width: Math.max(60, Math.max(widthPx, depthPx) * 1.4),
+      height: 4
+    };
+  }
+
+  if (category === "particle_system") {
+    return {
+      kind: "cluster",
+      radius: 3,
+      spread: clamp(Math.max(widthPx, depthPx) * 0.22, 8, 18)
+    };
+  }
+
+  if (category === "vehicle") {
+    return {
+      kind: "rect",
+      width: Math.max(42, widthPx),
+      height: Math.max(16, heightPx * 0.6)
+    };
+  }
+
+  if (category === "device") {
+    return {
+      kind: "rect",
+      width: Math.max(18, widthPx),
+      height: Math.max(28, heightPx)
     };
   }
 
   return {
     kind: "circle",
-    r: 20,
-    pendingInset: 5
+    r: clamp(Math.max(widthPx, heightPx, depthPx) * 0.28, 10, 28)
   };
 }
 
@@ -300,6 +337,15 @@ function clampShapeCenter(projection: Projection, shape: ShapeSpec) {
     return {
       x: clamp(projection.x, shape.rx + 2, VIEWBOX_WIDTH - shape.rx - 2),
       y: clamp(projection.y, shape.ry + 2, VIEWBOX_HEIGHT - shape.ry - 28)
+    };
+  }
+
+  if (shape.kind === "cluster") {
+    const radius = shape.radius + shape.spread;
+
+    return {
+      x: clamp(projection.x, radius + 2, VIEWBOX_WIDTH - radius - 2),
+      y: clamp(projection.y, radius + 2, VIEWBOX_HEIGHT - radius - 28)
     };
   }
 
@@ -321,41 +367,38 @@ function buildObjectWireframe(
   const labelY = clamp(center.y + 14, 0, VIEWBOX_HEIGHT - 16);
   const name = getObjectLabel(object);
   const pending = hasPendingSynthesis(object);
-  const labelText = pending ? `${name} ${PENDING_SYMBOL} PENDING` : name;
-
+  const strokeStyle = pending
+    ? `stroke="${accentColor}" stroke-width="1.5" stroke-dasharray="4 2"`
+    : `stroke="${accentColor}" stroke-width="1.5"`;
+  const pendingBadge = pending
+    ? `<text x="${clamp(center.x + 28, 0, VIEWBOX_WIDTH - 10)}" y="${labelY}" fill="#ffcc00" font-size="10" text-anchor="start">${PENDING_SYMBOL} pending</text>`
+    : "";
   let baseShape = "";
-  let pendingOutline = "";
 
   if (shape.kind === "rect") {
     const x = clamp(center.x - shape.width / 2, 0, VIEWBOX_WIDTH);
     const y = clamp(center.y - shape.height / 2, 0, VIEWBOX_HEIGHT);
 
-    baseShape = `<rect x="${x}" y="${y}" width="${shape.width}" height="${shape.height}" fill="none" stroke="${accentColor}" stroke-width="1.5" />`;
-
-    if (pending) {
-      const inset = shape.pendingInset;
-
-      pendingOutline = `<rect x="${clamp(x - inset, 0, VIEWBOX_WIDTH)}" y="${clamp(y - inset, 0, VIEWBOX_HEIGHT)}" width="${clamp(shape.width + inset * 2, 0, VIEWBOX_WIDTH)}" height="${clamp(shape.height + inset * 2, 0, VIEWBOX_HEIGHT)}" fill="none" stroke="#ff9b2f" stroke-width="1.25" stroke-dasharray="4 3" />`;
-    }
+    baseShape = `<rect x="${x}" y="${y}" width="${shape.width}" height="${shape.height}" rx="3" fill="none" ${strokeStyle} />`;
   } else if (shape.kind === "ellipse") {
-    baseShape = `<ellipse cx="${center.x}" cy="${center.y}" rx="${shape.rx}" ry="${shape.ry}" fill="none" stroke="${accentColor}" stroke-width="1.5" />`;
-
-    if (pending) {
-      pendingOutline = `<ellipse cx="${center.x}" cy="${center.y}" rx="${shape.rx + shape.pendingInset}" ry="${shape.ry + shape.pendingInset}" fill="none" stroke="#ff9b2f" stroke-width="1.25" stroke-dasharray="4 3" />`;
-    }
+    baseShape = `<ellipse cx="${center.x}" cy="${center.y}" rx="${shape.rx}" ry="${shape.ry}" fill="none" ${strokeStyle} />`;
+  } else if (shape.kind === "cluster") {
+    baseShape = [
+      `<circle cx="${center.x}" cy="${center.y}" r="${shape.radius}" fill="none" ${strokeStyle} />`,
+      `<circle cx="${center.x - shape.spread}" cy="${center.y - 5}" r="2" fill="none" ${strokeStyle} />`,
+      `<circle cx="${center.x + shape.spread}" cy="${center.y - 5}" r="2" fill="none" ${strokeStyle} />`,
+      `<circle cx="${center.x - shape.spread + 2}" cy="${center.y + 6}" r="2" fill="none" ${strokeStyle} />`,
+      `<circle cx="${center.x + shape.spread - 2}" cy="${center.y + 6}" r="2" fill="none" ${strokeStyle} />`
+    ].join("");
   } else {
-    baseShape = `<circle cx="${center.x}" cy="${center.y}" r="${shape.r}" fill="none" stroke="${accentColor}" stroke-width="1.5" />`;
-
-    if (pending) {
-      pendingOutline = `<circle cx="${center.x}" cy="${center.y}" r="${shape.r + shape.pendingInset}" fill="none" stroke="#ff9b2f" stroke-width="1.25" stroke-dasharray="4 3" />`;
-    }
+    baseShape = `<circle cx="${center.x}" cy="${center.y}" r="${shape.r}" fill="none" ${strokeStyle} />`;
   }
 
   return `
     <g data-object-id="${escapeXml(object.id)}">
       ${baseShape}
-      ${pendingOutline}
-      <text x="${center.x}" y="${labelY}" fill="#ffffff" font-size="10" text-anchor="middle">${escapeXml(labelText)}</text>
+      <text x="${center.x}" y="${labelY}" fill="#ffffff" font-size="10" text-anchor="middle">${escapeXml(name)}</text>
+      ${pendingBadge}
       <text x="${center.x}" y="${hiddenAxisY}" fill="rgba(255,255,255,0.65)" font-size="8" text-anchor="middle">${escapeXml(projection.hiddenAxisLabel)}</text>
     </g>
   `;
@@ -421,8 +464,8 @@ function buildLegend() {
   return `
     <g data-legend="preview">
       <text x="16" y="350" fill="rgba(255,255,255,0.45)" font-size="8">${LIGHT_SYMBOL} = light source</text>
-      <text x="16" y="362" fill="rgba(255,255,255,0.45)" font-size="8">&#9633; = object</text>
-      <text x="16" y="374" fill="rgba(255,255,255,0.45)" font-size="8">${PENDING_SYMBOL} = pending synthesis</text>
+      <text x="16" y="362" fill="rgba(255,255,255,0.45)" font-size="8">ellipse = humanoid, rect = device/container/vehicle, flat bar = surface</text>
+      <text x="16" y="374" fill="rgba(255,255,255,0.45)" font-size="8">dot cluster = particles, solid stroke = resolved, dashed stroke = pending synthesis</text>
     </g>
   `;
 }

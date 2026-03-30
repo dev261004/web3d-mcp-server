@@ -16,6 +16,7 @@ import {
   detectChannelConflicts,
   materializeAnimationConfig,
   mergeAnimationConfig,
+  normalizePulseConfig,
   normalizeAnimationType,
   resolveRotateSemantics,
   resolveTargetObject,
@@ -64,7 +65,16 @@ const animationEntrySchema = z.object({
       speed: z.number().optional(),
       amplitude: z.number().optional(),
       range: z.number().optional(),
-      axis: z.enum(["x", "y", "z"]).optional()
+      axis: z.enum(["x", "y", "z"]).optional(),
+      scale: z.number().optional(),
+      scale_range: z.tuple([z.number(), z.number()]).optional(),
+      _derived: z
+        .object({
+          scale: z.number().optional(),
+          scale_range: z.tuple([z.number(), z.number()]).optional()
+        })
+        .partial()
+        .optional()
     })
     .partial()
     .optional(),
@@ -124,11 +134,7 @@ function buildStoredConfig(type: AnimationType, config: ReturnType<typeof saniti
   const canonicalType = normalizeAnimationType(type);
 
   if (canonicalType === "pulse") {
-    return {
-      speed: config.speed ?? ANIMATION_DEFAULTS.pulse.speed,
-      scale: config.scale ?? ANIMATION_DEFAULTS.pulse.scale,
-      scale_range: config.scale_range ?? [1, config.scale ?? ANIMATION_DEFAULTS.pulse.scale ?? 1.1]
-    };
+    return normalizePulseConfig(config);
   }
 
   if (canonicalType === "rotate") {
@@ -193,8 +199,9 @@ function processAnimationEntry(context: ProcessContext): ApplyAnimationSuccessOu
   const mergedConfig = merge
     ? mergeAnimationConfig(configBefore ?? undefined, incomingConfig, entry.override ?? false)
     : mergeAnimationConfig(undefined, incomingConfig, true);
-  const storedConfig = buildStoredConfig(entry.type, mergedConfig);
   const canonicalType = normalizeAnimationType(entry.type);
+  const storedConfig = buildStoredConfig(entry.type, mergedConfig);
+  const configAfter = canonicalType === "pulse" ? normalizePulseConfig(mergedConfig) : mergedConfig;
   const animationPayload = {
     id: existingAnimation && merge ? existingAnimation.id : randomUUID(),
     target: target.target_name,
@@ -240,7 +247,7 @@ function processAnimationEntry(context: ProcessContext): ApplyAnimationSuccessOu
     target_name: target.target_name,
     action,
     config_before: configBefore,
-    config_after: mergedConfig,
+    config_after: configAfter,
     ...(canonicalType === "rotate" && typeof storedConfig.range === "number"
       ? { resolved_semantics: resolveRotateSemantics(storedConfig.range) }
       : {}),

@@ -34,26 +34,41 @@ type SynthesizedComponentEntry = {
   componentName: string;
   refName: string;
   definitionBlock: string;
+  verified: boolean;
+  warningComment?: string;
 };
 
-function classifyMaterial(material: Material): MaterialCategory {
+const FALLBACK_PLACEHOLDER_COLOR = "#666666";
+
+function getSafeMaterial(material: Material | undefined | null): Material {
+  return material ?? {
+    type: "standard",
+    color: FALLBACK_PLACEHOLDER_COLOR,
+    roughness: 0.8,
+    metalness: 0
+  };
+}
+
+function classifyMaterial(material: Material | undefined | null): MaterialCategory {
+  const safeMaterial = getSafeMaterial(material);
+
   if (
-    material.type === "glass" ||
-    (typeof material.transmission === "number" && material.transmission > 0)
+    safeMaterial.type === "glass" ||
+    (typeof safeMaterial.transmission === "number" && safeMaterial.transmission > 0)
   ) {
     return "transmission";
   }
 
   if (
-    material.type === "metal" ||
-    (typeof material.metalness === "number" && material.metalness >= 0.8)
+    safeMaterial.type === "metal" ||
+    (typeof safeMaterial.metalness === "number" && safeMaterial.metalness >= 0.8)
   ) {
     return "physical";
   }
 
   if (
-    typeof material.emissiveIntensity === "number" &&
-    material.emissiveIntensity > 0.5
+    typeof safeMaterial.emissiveIntensity === "number" &&
+    safeMaterial.emissiveIntensity > 0.5
   ) {
     return "emissive";
   }
@@ -173,15 +188,16 @@ function getSafeVector3(value: unknown, fallback: [number, number, number]): [nu
 }
 
 function buildMaterialJsx(material: Material, extraIndent = 0): string {
-  const category = classifyMaterial(material);
+  const safeMaterial = getSafeMaterial(material);
+  const category = classifyMaterial(safeMaterial);
   const pad = " ".repeat(extraIndent);
 
   switch (category) {
     case "transmission": {
       const props = [
-        `color="${material.color}"`,
-        `transmission={${material.transmission ?? 0.85}}`,
-        `roughness={${material.roughness ?? 0.1}}`,
+        `color="${safeMaterial.color}"`,
+        `transmission={${safeMaterial.transmission ?? 0.85}}`,
+        `roughness={${safeMaterial.roughness ?? 0.1}}`,
         `thickness={0.5}`,
         `chromaticAberration={0.03}`,
         `anisotropy={0.1}`,
@@ -190,17 +206,17 @@ function buildMaterialJsx(material: Material, extraIndent = 0): string {
         `temporalDistortion={0.0}`
       ];
 
-      if (typeof material.metalness === "number") {
-        props.push(`metalness={${material.metalness}}`);
+      if (typeof safeMaterial.metalness === "number") {
+        props.push(`metalness={${safeMaterial.metalness}}`);
       }
 
-      if (typeof material.envMapIntensity === "number") {
-        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      if (typeof safeMaterial.envMapIntensity === "number") {
+        props.push(`envMapIntensity={${safeMaterial.envMapIntensity}}`);
       }
 
-      if (material.emissive) {
-        props.push(`emissive="${material.emissive}"`);
-        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0.3}}`);
+      if (safeMaterial.emissive) {
+        props.push(`emissive="${safeMaterial.emissive}"`);
+        props.push(`emissiveIntensity={${safeMaterial.emissiveIntensity ?? 0.3}}`);
       }
 
       return `${pad}<MeshTransmissionMaterial\n${props.map((prop) => `${pad}  ${prop}`).join("\n")}\n${pad}/>`;
@@ -208,21 +224,21 @@ function buildMaterialJsx(material: Material, extraIndent = 0): string {
 
     case "physical": {
       const props = [
-        `color="${material.color}"`,
-        `metalness={${material.metalness ?? 1}}`,
-        `roughness={${material.roughness ?? 0.05}}`
+        `color="${safeMaterial.color}"`,
+        `metalness={${safeMaterial.metalness ?? 1}}`,
+        `roughness={${safeMaterial.roughness ?? 0.05}}`
       ];
 
-      if (typeof material.envMapIntensity === "number") {
-        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      if (typeof safeMaterial.envMapIntensity === "number") {
+        props.push(`envMapIntensity={${safeMaterial.envMapIntensity}}`);
       }
 
-      if (material.emissive) {
-        props.push(`emissive="${material.emissive}"`);
-        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0}}`);
+      if (safeMaterial.emissive) {
+        props.push(`emissive="${safeMaterial.emissive}"`);
+        props.push(`emissiveIntensity={${safeMaterial.emissiveIntensity ?? 0}}`);
       }
 
-      if (material.flatShading) {
+      if (safeMaterial.flatShading) {
         props.push("flatShading");
       }
 
@@ -231,18 +247,18 @@ function buildMaterialJsx(material: Material, extraIndent = 0): string {
 
     case "emissive": {
       const props = [
-        `color="${material.color}"`,
-        `metalness={${material.metalness ?? 0.2}}`,
-        `roughness={${material.roughness ?? 0.1}}`,
-        `emissive="${material.emissive || material.color}"`,
-        `emissiveIntensity={${material.emissiveIntensity ?? 1}}`
+        `color="${safeMaterial.color}"`,
+        `metalness={${safeMaterial.metalness ?? 0.2}}`,
+        `roughness={${safeMaterial.roughness ?? 0.1}}`,
+        `emissive="${safeMaterial.emissive || safeMaterial.color}"`,
+        `emissiveIntensity={${safeMaterial.emissiveIntensity ?? 1}}`
       ];
 
-      if (typeof material.envMapIntensity === "number") {
-        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      if (typeof safeMaterial.envMapIntensity === "number") {
+        props.push(`envMapIntensity={${safeMaterial.envMapIntensity}}`);
       }
 
-      if (material.flatShading) {
+      if (safeMaterial.flatShading) {
         props.push("flatShading");
       }
 
@@ -251,26 +267,26 @@ function buildMaterialJsx(material: Material, extraIndent = 0): string {
 
     case "standard":
     default: {
-      const props = [`color="${material.color}"`];
+      const props = [`color="${safeMaterial.color}"`];
 
-      if (typeof material.metalness === "number") {
-        props.push(`metalness={${material.metalness}}`);
+      if (typeof safeMaterial.metalness === "number") {
+        props.push(`metalness={${safeMaterial.metalness}}`);
       }
 
-      if (typeof material.roughness === "number") {
-        props.push(`roughness={${material.roughness}}`);
+      if (typeof safeMaterial.roughness === "number") {
+        props.push(`roughness={${safeMaterial.roughness}}`);
       }
 
-      if (material.emissive) {
-        props.push(`emissive="${material.emissive}"`);
-        props.push(`emissiveIntensity={${material.emissiveIntensity ?? 0}}`);
+      if (safeMaterial.emissive) {
+        props.push(`emissive="${safeMaterial.emissive}"`);
+        props.push(`emissiveIntensity={${safeMaterial.emissiveIntensity ?? 0}}`);
       }
 
-      if (typeof material.envMapIntensity === "number") {
-        props.push(`envMapIntensity={${material.envMapIntensity}}`);
+      if (typeof safeMaterial.envMapIntensity === "number") {
+        props.push(`envMapIntensity={${safeMaterial.envMapIntensity}}`);
       }
 
-      if (material.flatShading) {
+      if (safeMaterial.flatShading) {
         props.push("flatShading");
       }
 
@@ -284,8 +300,9 @@ function buildEmissiveGlowLight(object: SceneObject): string {
     return "";
   }
 
-  const glowColor = object.material.emissive || object.material.color;
-  const intensity = Math.min((object.material.emissiveIntensity ?? 1) * 0.4, 1.5);
+  const material = getSafeMaterial(object.material);
+  const glowColor = material.emissive || material.color;
+  const intensity = Math.min((material.emissiveIntensity ?? 1) * 0.4, 1.5);
   const [x, y, z] = getSafeVector3(object.position, [0, 0, 0]);
 
   return `      <pointLight position={[${x}, ${y}, ${z}]} color="${glowColor}" intensity={${intensity.toFixed(2)}} distance={3} decay={2} />`;
@@ -359,8 +376,22 @@ function buildAnimationHooks(
   });`;
       }
 
-      if (animation.type === "pulse" && "scale_range" in animation.config) {
-        const [minScale, maxScale] = animation.config.scale_range;
+      if (animation.type === "pulse" && ("scale_range" in animation.config || "_derived" in animation.config)) {
+        const pulseConfig = animation.config as {
+          scale_range?: [number, number];
+          _derived?: {
+            scale_range?: [number, number];
+          };
+        };
+        const resolvedScaleRange =
+          pulseConfig._derived?.scale_range ||
+          pulseConfig.scale_range;
+
+        if (!resolvedScaleRange) {
+          return "";
+        }
+
+        const [minScale, maxScale] = resolvedScaleRange;
         const scaleDelta = maxScale - minScale;
 
         return `
@@ -498,16 +529,22 @@ function buildSynthesizedComponentEntries(
     const trimmed = jsxString.trim();
     const extractedComponentName = extractForwardRefComponentName(trimmed);
     const componentName = extractedComponentName ?? `${toPascalCase(object.name ?? object.id)}Geometry`;
-    const definitionBody = extractedComponentName
+    const verified = Boolean(extractedComponentName);
+    const definitionBody = verified
       ? ensureComponentDisplayName(trimmed, componentName)
-      : `// Warning: synthesized component [${objectId}] does not start with "const "; emitted as-is for debugging.\n${trimmed}`;
+      : `// Warning: synthesized component [${objectId}] does not define a top-level React.forwardRef const component. Placeholder geometry will be rendered for this object.`;
+    const warningComment = verified
+      ? undefined
+      : `// Warning: synthesized component [${objectId}] could not be verified and was replaced with a placeholder mesh.`;
 
     entries.push({
       objectId,
       object,
       componentName,
       refName: getRefNameForObject(object, refNameMap),
-      definitionBlock: `// Auto-synthesized geometry for: ${object.name ?? object.id}\n${definitionBody}`
+      definitionBlock: `// Auto-synthesized geometry for: ${object.name ?? object.id}\n${definitionBody}`,
+      verified,
+      warningComment
     });
   }
 
@@ -518,13 +555,54 @@ function buildSynthesizedComponentEntries(
   };
 }
 
+function getPlaceholderDimensions(object: SceneObject): [number, number, number] {
+  const renderHintBox = object.render_hints?.bounding_box;
+
+  if (
+    Array.isArray(renderHintBox) &&
+    renderHintBox.length === 3 &&
+    renderHintBox.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+  ) {
+    return [renderHintBox[0], renderHintBox[1], renderHintBox[2]];
+  }
+
+  const synthesisBox = object.synthesis_contract?.bounding_box;
+
+  if (
+    Array.isArray(synthesisBox) &&
+    synthesisBox.length === 3 &&
+    synthesisBox.every((value) => typeof value === "number" && Number.isFinite(value) && value > 0)
+  ) {
+    return [synthesisBox[0], synthesisBox[1], synthesisBox[2]];
+  }
+
+  return [0.5, 0.5, 0.5];
+}
+
+function buildPlaceholderObjectBlock(object: SceneObject, refName: string | null, note?: string) {
+  const refProp = refName ? `ref={${refName}} ` : "";
+  const position = `position={${JSON.stringify(getSafeVector3(object.position, [0, 0, 0]))}}`;
+  const rotation = `rotation={${JSON.stringify(getSafeVector3(object.rotation, [0, 0, 0]))}}`;
+  const scale = `scale={${JSON.stringify(getSafeVector3(object.scale, [1, 1, 1]))}}`;
+  const [width, height, depth] = getPlaceholderDimensions(object);
+  const comment = note ?? `Placeholder: ${object.name ?? object.id} synthesized geometry pending`;
+
+  return [
+    `      {/* ${comment} */}`,
+    `      <mesh ${refProp}${position} ${rotation} ${scale}>`,
+    `        <boxGeometry args={[${width}, ${height}, ${depth}]} />`,
+    `        <meshStandardMaterial color="${FALLBACK_PLACEHOLDER_COLOR}" wireframe />`,
+    "      </mesh>"
+  ].join("\n");
+}
+
 function buildSceneGraph(
   scene: SceneData,
   synthesizedComponents: Map<string, SynthesizedComponentEntry>,
   animatedObjectIds: Set<string>,
   refNameMap: Map<string, string>
 ) {
-  return scene.objects
+  const graph = scene.objects
     .map((object) => {
       const synthesizedEntry = synthesizedComponents.get(object.id);
       const refName = synthesizedEntry
@@ -537,7 +615,7 @@ function buildSceneGraph(
       const rotation = `rotation={${JSON.stringify(getSafeVector3(object.rotation, [0, 0, 0]))}}`;
       const scale = `scale={${JSON.stringify(getSafeVector3(object.scale, [1, 1, 1]))}}`;
 
-      if (synthesizedEntry) {
+      if (synthesizedEntry?.verified) {
         const lines = [
           `      <${synthesizedEntry.componentName} ${refProp}${position} ${rotation} ${scale} />`
         ];
@@ -550,11 +628,24 @@ function buildSceneGraph(
         return lines.join("\n");
       }
 
+      if (synthesizedEntry && !synthesizedEntry.verified) {
+        return [
+          synthesizedEntry.warningComment ?? "",
+          buildPlaceholderObjectBlock(object, refName, `${object.name ?? object.id} placeholder rendered because synthesized component could not be verified`)
+        ]
+          .filter(Boolean)
+          .join("\n");
+      }
+
+      if (isSynthesisObject(object)) {
+        return buildPlaceholderObjectBlock(object, refName, `${object.name ?? object.id} placeholder rendered because synthesized JSX was not provided`);
+      }
+
       if (object.type === "primitive" && isPrimitiveShape(object.shape)) {
         const lines = [
           `      <mesh ${refProp}${position} ${rotation} ${scale}>`,
           buildGeometryJsx(object.shape, resolveSegmentCount(object), 8),
-          buildMaterialJsx(object.material, 8),
+          buildMaterialJsx(getSafeMaterial(object.material), 8),
           "      </mesh>"
         ];
         const glowLight = buildEmissiveGlowLight(object);
@@ -570,6 +661,21 @@ function buildSceneGraph(
     })
     .filter(Boolean)
     .join("\n");
+
+  const placeholderObjectCount = scene.objects.filter((object) => {
+    if (!isSynthesisObject(object)) {
+      return false;
+    }
+
+    const entry = synthesizedComponents.get(object.id);
+
+    return !entry || !entry.verified;
+  }).length;
+
+  return {
+    graph,
+    placeholderObjectCount
+  };
 }
 
 function buildImports(
@@ -755,7 +861,7 @@ ${animationHooks ? `\n${animationHooks}\n` : ""}
   return (
     <>
 ${lightingJsx}
-${sceneGraph}
+${sceneGraph.graph}
     </>
   );
 }`;
@@ -783,7 +889,53 @@ ${propTypesBlock}`;
     language: typing === "typescript" ? "tsx" : "jsx",
     framework,
     synthesized_object_count: Object.keys(synthesizedComponents).length,
+    placeholder_object_count: sceneGraph.placeholderObjectCount,
     scene_id: scene.scene_id
+  };
+}
+
+function generatePlaceholderScene(
+  scene: SceneData,
+  framework: R3FFramework,
+  typing: R3FTypingMode
+) {
+  const useClientDirective = framework === "nextjs" ? `"use client";\n\n` : "";
+  const language: "tsx" | "jsx" = typing === "typescript" ? "tsx" : "jsx";
+  const cameraPosition = getSafeVector3(scene.camera?.position, [0, 2, 5]);
+  const fov = typeof scene.camera?.fov === "number" ? scene.camera.fov : 50;
+  const background = scene.environment?.background?.value ?? "#050a15";
+  const objects = (scene.objects ?? [])
+    .map((object) => {
+      const position = getSafeVector3(object.position, [0, 0, 0]);
+      const rotation = getSafeVector3(object.rotation, [0, 0, 0]);
+      const scale = getSafeVector3(object.scale, [1, 1, 1]);
+      const [width, height, depth] = getPlaceholderDimensions(object);
+
+      return [
+        `      {/* Placeholder: ${object.name ?? object.id ?? "object"} */}`,
+        `      <mesh position={${JSON.stringify(position)}} rotation={${JSON.stringify(rotation)}} scale={${JSON.stringify(scale)}}>`,
+        `        <boxGeometry args={[${width}, ${height}, ${depth}]} />`,
+        `        <meshStandardMaterial color="${FALLBACK_PLACEHOLDER_COLOR}" wireframe />`,
+        "      </mesh>"
+      ].join("\n");
+    })
+    .join("\n");
+
+  return {
+    language,
+    r3f_code: `${useClientDirective}import React from "react";
+import { Canvas } from "@react-three/fiber";
+
+export default function PlaceholderScene() {
+  return (
+    <Canvas camera={{ position: ${JSON.stringify(cameraPosition)}, fov: ${fov} }}>
+      <color attach="background" args={["${background}"]} />
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[2, 4, 2]} intensity={1} />
+${objects}
+    </Canvas>
+  );
+}`
   };
 }
 
@@ -793,61 +945,94 @@ export function handleGenerateR3FCode(
 ): GenerateR3FResult {
   const framework = options.framework ?? "plain";
   const typing = options.typing ?? "none";
-  const contractObjects = scene.objects.filter(isSynthesisObject);
-  const providedComponents = options.synthesized_components ?? {};
-  const autoFilledComponents: Record<string, string> = { ...providedComponents };
 
-  for (const object of contractObjects) {
-    if (autoFilledComponents[object.id]) {
-      continue;
+  try {
+    const sceneObjects = Array.isArray(scene.objects) ? scene.objects : [];
+    const contractObjects = sceneObjects.filter(isSynthesisObject);
+    const providedComponents = options.synthesized_components ?? {};
+    const autoFilledComponents: Record<string, string> = { ...providedComponents };
+
+    for (const object of contractObjects) {
+      if (autoFilledComponents[object.id]) {
+        continue;
+      }
+
+      const cachedGeometry = getCachedGeometry(getCacheKeyForObject(scene, object));
+      if (cachedGeometry) {
+        autoFilledComponents[object.id] = cachedGeometry;
+      }
     }
 
-    const cachedGeometry = getCachedGeometry(getCacheKeyForObject(scene, object));
-    if (cachedGeometry) {
-      autoFilledComponents[object.id] = cachedGeometry;
+    const result = assembleR3FComponent(scene, framework, typing, autoFilledComponents);
+    const placeholderNames = contractObjects
+      .filter((object) => !autoFilledComponents[object.id])
+      .map((object) => object.name || object.id);
+
+    for (const [objectId, jsx] of Object.entries(providedComponents)) {
+      const object = contractObjects.find((entry) => entry.id === objectId);
+
+      if (!object) {
+        continue;
+      }
+
+      setCachedGeometry(getCacheKeyForObject(scene, object), {
+        jsx,
+        object_name: object.name || object.id,
+        category: object.synthesis_contract.category,
+        style: getSceneStyle(scene),
+        material_preset: getSceneMaterialPreset(scene),
+        accent_color: getSceneAccentColor(scene)
+      });
+    }
+
+    if (result.placeholder_object_count && result.placeholder_object_count > 0) {
+      return {
+        ...result,
+        warning: placeholderNames.length > 0
+          ? `Placeholder meshes were used for unresolved synthesis objects: ${placeholderNames.join(", ")}. Provide synthesized_components with raw JSX strings to replace them.`
+          : "Placeholder meshes were used for one or more synthesis objects because their synthesized components could not be verified."
+      };
+    }
+
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown code generation failure.";
+    const hint = "If you have synthesis_contract objects, ensure synthesized_components contains a JSX string for each object id. Do not pass object-type values; only raw JSX strings are accepted.";
+
+    try {
+      const fallback = generatePlaceholderScene(scene, framework, typing);
+
+      return {
+        status: "PARTIAL",
+        warning: `Full codegen failed. Returning placeholder scene instead. Error: ${message}`,
+        error: message,
+        hint,
+        r3f_code: fallback.r3f_code,
+        language: fallback.language,
+        framework,
+        scene_id: scene?.scene_id ?? ""
+      };
+    } catch {
+      return {
+        status: "ERROR",
+        error: message,
+        hint,
+        scene_id: scene?.scene_id ?? null
+      };
     }
   }
-
-  if (contractObjects.length > 0) {
-    const missingObjects = contractObjects.filter((object) => !autoFilledComponents[object.id]);
-
-    if (missingObjects.length > 0) {
-      const customMessage = Object.keys(providedComponents).length > 0
-        ? `synthesized_components was provided but missing entries for: ${missingObjects.map((object) => object.name || object.id).join(", ")}. Generate the missing components and call again.`
-        : undefined;
-
-      return buildSynthesisRequiredResponse(missingObjects, scene, framework, typing, customMessage);
-    }
-  }
-
-  const result = assembleR3FComponent(scene, framework, typing, autoFilledComponents);
-
-  for (const [objectId, jsx] of Object.entries(providedComponents)) {
-    const object = contractObjects.find((entry) => entry.id === objectId);
-
-    if (!object) {
-      continue;
-    }
-
-    setCachedGeometry(getCacheKeyForObject(scene, object), {
-      jsx,
-      object_name: object.name || object.id,
-      category: object.synthesis_contract.category,
-      style: getSceneStyle(scene),
-      material_preset: getSceneMaterialPreset(scene),
-      accent_color: getSceneAccentColor(scene)
-    });
-  }
-
-  return result;
 }
 
 export function generateR3FCode(scene: SceneData, options: GenerateR3FOptions = {}) {
   const result = handleGenerateR3FCode(scene, options);
 
-  if (result.status !== "SUCCESS") {
+  if (result.status === "SUCCESS" || result.status === "PARTIAL") {
+    return result.r3f_code;
+  }
+
+  if (result.status === "SYNTHESIS_REQUIRED") {
     throw new Error(result.message);
   }
 
-  return result.r3f_code;
+  throw new Error(result.error);
 }

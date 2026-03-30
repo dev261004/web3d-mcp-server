@@ -264,6 +264,118 @@ const NON_OBJECT_WORDS = new Set([
   "to"
 ]);
 
+const HINT_DENYLIST = new Set([
+  ...NON_OBJECT_WORDS,
+  "should",
+  "would",
+  "could",
+  "will",
+  "can",
+  "must",
+  "shall",
+  "may",
+  "might",
+  "use",
+  "need",
+  "want",
+  "do",
+  "go",
+  "get",
+  "give",
+  "take",
+  "see",
+  "move",
+  "respond",
+  "hover",
+  "display",
+  "create",
+  "build",
+  "over",
+  "under",
+  "from",
+  "into",
+  "onto",
+  "also",
+  "when",
+  "where",
+  "without",
+  "between",
+  "around",
+  "through",
+  "across",
+  "along",
+  "or",
+  "but",
+  "so",
+  "if",
+  "as",
+  "at",
+  "rich",
+  "deep",
+  "high",
+  "low",
+  "smooth",
+  "slow",
+  "fast",
+  "gentle",
+  "subtle",
+  "dramatic",
+  "premium",
+  "luxury",
+  "glossy",
+  "warm",
+  "cool",
+  "bright",
+  "dark",
+  "autonomous",
+  "idle",
+  "interactive",
+  "responsive",
+  "animated",
+  "dynamic",
+  "always",
+  "never",
+  "very",
+  "quite",
+  "well",
+  "just",
+  "it",
+  "its",
+  "they",
+  "their",
+  "this",
+  "that",
+  "these",
+  "those",
+  "them",
+  "cursor",
+  "movement",
+  "motion",
+  "effect",
+  "look",
+  "feel",
+  "mode"
+]);
+
+const KNOWN_OBJECT_VOCABULARY = new Set([
+  ...Object.values(OBJECT_ALIASES),
+  "handbag",
+  "purse",
+  "tote",
+  "particle",
+  "particles",
+  "confetti",
+  "sparkle",
+  "sparkles",
+  "floor",
+  "ground",
+  "surface",
+  "reflection",
+  "mirror",
+  "backdrop",
+  "environment"
+].map((entry) => normalizeText(entry)));
+
 const RESERVED_WORDS = new Set(
   [
     ...Object.keys(OBJECT_ALIASES),
@@ -427,15 +539,11 @@ function createConfirmedObjectLabel(match: AliasMatch, normalizedPrompt: string)
 
 export function extractObjectHints(userPrompt: string) {
   const normalizedPrompt = normalizeText(userPrompt);
-  const objects: string[] = [];
+  const rawHints: string[] = [];
   const { matches, words, consumedIndexes } = findAliasMatches(normalizedPrompt);
 
   for (const match of matches) {
-    objects.push(match.canonical);
-  }
-
-  if (uniqueWords(objects).length >= 3) {
-    return uniqueWords(objects);
+    rawHints.push(match.canonical);
   }
 
   for (const [index, word] of words.entries()) {
@@ -457,10 +565,10 @@ export function extractObjectHints(userPrompt: string) {
       continue;
     }
 
-    objects.push(canonicalWord);
+    rawHints.push(canonicalWord);
   }
 
-  return uniqueWords(objects);
+  return filterObjectHints(rawHints).accepted;
 }
 
 export function extractConfirmedObjects(userPrompt: string) {
@@ -469,6 +577,70 @@ export function extractConfirmedObjects(userPrompt: string) {
   const confirmedObjects = matches.map((match) => createConfirmedObjectLabel(match, normalizedPrompt));
 
   return uniqueWords(confirmedObjects);
+}
+
+function isLikelyObjectHint(value: string) {
+  if (!value || value.length < 3 || /^\d+$/.test(value)) {
+    return false;
+  }
+
+  if (HINT_DENYLIST.has(value) || RESERVED_WORDS.has(value)) {
+    return false;
+  }
+
+  if (/(ing|ed|ly|tion|ness)$/.test(value)) {
+    return false;
+  }
+
+  return KNOWN_OBJECT_VOCABULARY.has(value) || /^[a-z0-9-]+$/.test(value);
+}
+
+function filterObjectHints(rawHints: string[]) {
+  const accepted: string[] = [];
+  const discarded: string[] = [];
+
+  for (const hint of rawHints) {
+    const normalizedHint = normalizeText(hint);
+
+    if (!normalizedHint) {
+      continue;
+    }
+
+    if (isLikelyObjectHint(normalizedHint)) {
+      accepted.push(normalizedHint);
+    } else {
+      discarded.push(normalizedHint);
+    }
+  }
+
+  return {
+    accepted: uniqueWords(accepted),
+    discarded: uniqueWords(discarded)
+  };
+}
+
+export function extractDiscardedHints(userPrompt: string) {
+  const normalizedPrompt = normalizeText(userPrompt);
+  const rawHints: string[] = [];
+  const { matches, words, consumedIndexes } = findAliasMatches(normalizedPrompt);
+
+  for (const match of matches) {
+    rawHints.push(match.canonical);
+  }
+
+  for (const [index, word] of words.entries()) {
+    if (consumedIndexes.has(index)) {
+      continue;
+    }
+
+    if (!word || word.length < 3 || /^\d+$/.test(word)) {
+      continue;
+    }
+
+    rawHints.push(OBJECT_ALIASES[word] ?? word);
+  }
+
+  return filterObjectHints(rawHints).discarded;
 }
 
 function normalizePromptDetail(userPrompt: string) {
@@ -636,6 +808,7 @@ export function refinePrompt(userPrompt: string) {
 
   const objectHints = extractObjectHints(userPrompt);
   const confirmedObjects = extractConfirmedObjects(userPrompt);
+  const discardedHints = extractDiscardedHints(userPrompt);
   const colorHints = extractColorHints(userPrompt);
 
   return {
@@ -647,6 +820,7 @@ export function refinePrompt(userPrompt: string) {
       design_tokens: designTokens,
       object_hints: objectHints,
       confirmed_objects: confirmedObjects,
+      discarded_hints: discardedHints,
       color_hints: colorHints
     }
   };

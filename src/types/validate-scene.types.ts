@@ -104,6 +104,8 @@ export interface ValidationResult {
   message: string | null;
   fix_hint: string | null;
   affected: string[] | null;
+  promoted?: boolean;
+  original_severity?: Severity;
 }
 
 export type Validator = (scene_data: SceneData) => ValidationResult | null;
@@ -112,12 +114,14 @@ export interface ValidateSceneOutput {
   validation_id: string;
   scene_id: string;
   validated_at: string;
+  strict_mode: boolean;
   is_valid: boolean;
   summary: {
     total_rules_run: number;
     passed: number;
     warnings: number;
     errors: number;
+    promoted_to_error: number;
     blocked: boolean;
   };
   results: ValidationResult[];

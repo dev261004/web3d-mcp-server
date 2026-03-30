@@ -97,11 +97,13 @@ function getRule(result, ruleId) {
 test("perfect_scene passes every validation rule", () => {
   const result = validateScene(buildPerfectScene());
 
+  assert.equal(result.strict_mode, false);
   assert.equal(result.is_valid, true);
   assert.equal(result.summary.total_rules_run, 13);
   assert.equal(result.summary.passed, 13);
   assert.equal(result.summary.warnings, 0);
   assert.equal(result.summary.errors, 0);
+  assert.equal(result.summary.promoted_to_error, 0);
   assert.deepEqual(getFailedRules(result), []);
   assert.match(result.next_step, /READY:/);
 });
@@ -211,10 +213,14 @@ test("strict_mode_warns_become_errors blocks overlapping_objects", () => {
   const result = validateScene(scene, true);
   const rule = getRule(result, "O4");
 
+  assert.equal(result.strict_mode, true);
   assert.equal(result.is_valid, false);
   assert.equal(rule.status, "fail");
   assert.equal(rule.severity, "error");
+  assert.equal(rule.promoted, true);
+  assert.equal(rule.original_severity, "warn");
   assert.equal(result.errors_detail[0].rule_id, "O4");
+  assert.equal(result.summary.promoted_to_error, 1);
   assert.match(result.next_step, /\[STRICT MODE\] BLOCKED/);
 });
 

@@ -248,3 +248,42 @@ test("target_id_omitted_targets_primary", () => {
   assert.equal(result.status, "SUCCESS");
   assert.equal(result.applied[0].target_id, "robot_1");
 });
+
+test("pulse_preserves_amplitude_and_exposes_derived_scale_fields", () => {
+  const firstPass = runApplyAnimation({
+    scene_data: buildBaseScene(),
+    animations: [
+      {
+        type: "pulse",
+        config: {
+          amplitude: 0.03,
+          speed: 1.2
+        }
+      }
+    ]
+  });
+
+  assert.equal(firstPass.status, "SUCCESS");
+  assert.equal(firstPass.applied[0].config_after.amplitude, 0.03);
+  assert.equal(firstPass.applied[0].config_after.scale, 1.03);
+  assert.deepEqual(firstPass.applied[0].config_after.scale_range, [1, 1.03]);
+  assert.deepEqual(firstPass.applied[0].config_after._derived, {
+    scale: 1.03,
+    scale_range: [1, 1.03]
+  });
+
+  const secondPass = runApplyAnimation({
+    scene_data: buildBaseScene(),
+    animations: [
+      {
+        type: "pulse",
+        config: firstPass.applied[0].config_after
+      }
+    ]
+  });
+
+  assert.equal(secondPass.status, "SUCCESS");
+  assert.equal(secondPass.scene_data.animations[0].config.amplitude, 0.03);
+  assert.equal(secondPass.scene_data.animations[0].config.scale, 1.03);
+  assert.deepEqual(secondPass.scene_data.animations[0].config.scale_range, [1, 1.03]);
+});

@@ -169,13 +169,13 @@ beforeEach(() => {
   clearCache();
 });
 
-test("detectCategory maps robot to character", () => {
+test("detectCategory maps robot to humanoid", () => {
   const result = runJson(`
     import { detectCategory } from "${DIST_ROOT}/lib/objectCategories.js";
     console.log(JSON.stringify(detectCategory("robot")));
   `);
 
-  assert.equal(result, "character");
+  assert.equal(result, "humanoid");
 });
 
 test("detectCategory maps coldrink to container", () => {
@@ -219,17 +219,21 @@ test("buildSynthesisContract returns expected robot contract", () => {
   `);
 
   assert.equal(result.type, "SYNTHESIS_REQUIRED");
-  assert.deepEqual(result.bounding_box, [1, 2, 1]);
+  assert.deepEqual(result.bounding_box, [0.6, 1.8, 0.5]);
   assert.equal(result.min_parts, 28);
   assert.equal(result.complexity_tier, "high");
   assert.equal(result.max_parts, null);
 });
 
-test("handleGenerateR3FCode requests synthesis when components are missing", () => {
+test("handleGenerateR3FCode renders placeholders when synthesized components are missing", () => {
   const result = runJson(buildSceneScript());
 
-  assert.equal(result.status, "SYNTHESIS_REQUIRED");
-  assert.equal(result.objects_needing_synthesis[0].object_name, "robot");
+  assert.equal(result.status, "SUCCESS");
+  assert.equal(result.placeholder_object_count, 1);
+  assert.match(result.warning, /Placeholder meshes were used/i);
+  assert.match(result.r3f_code, /robot placeholder rendered because synthesized JSX was not provided/i);
+  assert.match(result.r3f_code, /<boxGeometry args=\{\[0\.6, 1\.8, 0\.5\]\} \/>/);
+  assert.match(result.r3f_code, /meshStandardMaterial color="#666666" wireframe/);
 });
 
 test("handleGenerateR3FCode returns success when synthesized components are provided", () => {
@@ -242,6 +246,46 @@ test("handleGenerateR3FCode returns success when synthesized components are prov
   assert.match(result.r3f_code, /const robotRef = useRef<ObjectRef \| null>\(null\);/);
   assert.match(result.r3f_code, /if \(!robotRef\.current\) return;/);
   assert.match(result.r3f_code, /<RobotGeometry ref=\{robotRef\} position=\{\[0,0,0\]\} rotation=\{\[0,0,0\]\} scale=\{\[1,1,1\]\} \/>/);
+});
+
+test("handleGenerateR3FCode falls back to a placeholder scene on internal failure", () => {
+  const result = runJson(`
+    import { handleGenerateR3FCode } from "${DIST_ROOT}/services/r3fGenerator.js";
+
+    const brokenScene = {
+      scene_id: "broken_scene",
+      metadata: {
+        title: "Broken Scene",
+        use_case: "showcase",
+        style: "minimal",
+        created_at: "2026-03-30T00:00:00.000Z"
+      },
+      environment: {
+        background: {
+          type: "color",
+          value: "#050a15"
+        }
+      },
+      camera: {
+        type: "perspective",
+        position: [0, 2, 5],
+        fov: 45,
+        target: [0, 0, 0]
+      },
+      lighting: null,
+      objects: null,
+      animations: []
+    };
+
+    console.log(JSON.stringify(handleGenerateR3FCode(brokenScene, {
+      framework: "plain",
+      typing: "none"
+    })));
+  `);
+
+  assert.equal(result.status, "PARTIAL");
+  assert.match(result.warning, /placeholder scene/i);
+  assert.match(result.r3f_code, /export default function PlaceholderScene/);
 });
 
 test("synthesis cache stores and retrieves geometry", () => {
@@ -264,7 +308,7 @@ test("synthesis cache stores and retrieves geometry", () => {
     setCachedGeometry(key, {
       jsx: "<group />",
       object_name: "robot",
-      category: "character",
+      category: "humanoid",
       style: "futuristic",
       material_preset: "metal_chrome",
       accent_color: "#00F5FF"

@@ -78,7 +78,9 @@ function buildPreviewScript() {
             roughness: 0.05
           },
           synthesis_contract: {
-            __type: "SYNTHESIS_REQUIRED"
+            __type: "SYNTHESIS_REQUIRED",
+            category: "humanoid",
+            bounding_box: [0.6, 1.8, 0.5]
           }
         },
         {
@@ -121,6 +123,100 @@ function buildPreviewScript() {
   `;
 }
 
+function buildCategoryPreviewScript() {
+  return `
+    import { buildPreviewResult } from "${DIST_ROOT}/tools/preview.tool.js";
+
+    const scene = {
+      scene_id: "scene_preview_categories",
+      metadata: {
+        title: "Category Preview",
+        use_case: "showcase",
+        style: "premium",
+        design_tokens: {
+          use_case: "showcase",
+          theme: "premium",
+          material_preset: "metal_chrome",
+          animation: "none",
+          lighting_preset: "studio_soft",
+          background_preset: "dark_studio",
+          composition: "hero_centered"
+        },
+        color_hints: [
+          {
+            name: "cyan",
+            hex: "#00e5ff",
+            role: "accent"
+          }
+        ],
+        created_at: "2026-03-30T00:00:00.000Z"
+      },
+      environment: {
+        background: {
+          type: "color",
+          value: "#050a15"
+        }
+      },
+      camera: {
+        type: "perspective",
+        position: [0, 2, 5],
+        fov: 45,
+        target: [0, 0, 0]
+      },
+      lighting: [],
+      objects: [
+        {
+          id: "bag_1",
+          type: "synthesis_contract",
+          name: "luxury_handbag",
+          position: [-1, 0, 0.2],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          synthesis_contract: {
+            __type: "SYNTHESIS_REQUIRED",
+            category: "container",
+            bounding_box: [1, 0.7, 0.45]
+          }
+        },
+        {
+          id: "surface_1",
+          type: "synthesis_contract",
+          name: "ground_reflection",
+          position: [0, -1, -0.8],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          synthesis_contract: {
+            __type: "SYNTHESIS_REQUIRED",
+            category: "surface",
+            bounding_box: [6, 0.05, 6]
+          }
+        },
+        {
+          id: "particles_1",
+          type: "synthesis_contract",
+          name: "floating_particles",
+          position: [1.2, 0.6, -0.1],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          synthesis_contract: {
+            __type: "SYNTHESIS_REQUIRED",
+            category: "particle_system",
+            bounding_box: [1.2, 1.2, 1.2]
+          }
+        }
+      ],
+      animations: []
+    };
+
+    const result = buildPreviewResult(scene, "top", {
+      previewId: "11111111-1111-4111-8111-111111111111",
+      generatedAt: "2026-03-30T00:00:00.000Z"
+    });
+
+    console.log(JSON.stringify(result));
+  `;
+}
+
 test("buildPreviewResult generates SVG wireframe with scene title and pending marker", () => {
   const result = runJson(buildPreviewScript());
 
@@ -131,7 +227,8 @@ test("buildPreviewResult generates SVG wireframe with scene title and pending ma
   assert.match(result.svg_wireframe, /fill="#050a15"/);
   assert.match(result.svg_wireframe, /Robot Overlap Test/);
   assert.match(result.svg_wireframe, /#00e5ff/);
-  assert.match(result.svg_wireframe, /PENDING/);
+  assert.match(result.svg_wireframe, /pending/i);
+  assert.match(result.svg_wireframe, /stroke-dasharray="4 2"/);
   assert.match(result.svg_wireframe, /\u2726|✦/);
 });
 
@@ -157,4 +254,14 @@ test("buildPreviewResult reports overlap warning and invalid animation target fa
   assert.match(result.text_description.scene_overview, /Background: deep navy #050a15/);
   assert.match(result.text_description.objects[0], /\[Robot Alpha\].*synthesis: PENDING/);
   assert.match(result.text_description.animation_summary[0], /ghost_robot_id/);
+});
+
+test("buildPreviewResult uses category-aware SVG shapes for bags, surfaces, and particles", () => {
+  const result = runJson(buildCategoryPreviewScript());
+
+  assert.match(result.svg_wireframe, /data-object-id="bag_1"[\s\S]*<rect/s);
+  assert.match(result.svg_wireframe, /data-object-id="surface_1"[\s\S]*height="4"/s);
+  assert.match(result.svg_wireframe, /data-object-id="particles_1"[\s\S]*<circle[\s\S]*<circle[\s\S]*<circle/s);
+  assert.match(result.svg_wireframe, /\u26a0 pending|⚠ pending/);
+  assert.match(result.svg_wireframe, /solid stroke = resolved, dashed stroke = pending synthesis/);
 });

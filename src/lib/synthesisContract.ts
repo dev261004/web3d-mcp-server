@@ -1,4 +1,8 @@
-import { CATEGORY_MAP, detectCategory } from "./objectCategories.js";
+import {
+  buildAssemblyHint,
+  detectCategory,
+  getBoundingBox
+} from "./objectCategories.js";
 import {
   COMPLEXITY_PROFILES,
   resolveDefaultComplexity,
@@ -20,9 +24,9 @@ export function buildSynthesisContract(params: {
   target?: SynthesisTarget;
 }): SynthesisContract {
   const category = detectCategory(params.objectName);
-  const config = CATEGORY_MAP[category];
   const complexityTier = resolveContractComplexity(params);
   const profile = COMPLEXITY_PROFILES[complexityTier];
+  const boundingBox = getBoundingBox(category, complexityTier);
   const materialInstructions = buildMaterialInstructions(
     params.materialPreset,
     params.baseColor,
@@ -36,7 +40,7 @@ export function buildSynthesisContract(params: {
     object_id: params.objectId,
     object_name: params.objectName,
     category,
-    bounding_box: config.bbox,
+    bounding_box: boundingBox,
     complexity_tier: complexityTier,
     min_parts: profile.min_parts,
     max_parts: Number.isFinite(profile.max_parts) ? profile.max_parts : null,
@@ -48,7 +52,7 @@ export function buildSynthesisContract(params: {
     accent_color: params.accentColor,
     constraints: {
       geometryOnly: `Use ONLY these Three.js geometries: ${profile.allowed_geometries.join(", ")}. No custom buffer geometries.`,
-      boundingBox: `All meshes must fit within a bounding box of ${config.bbox[0]}w x ${config.bbox[1]}h x ${config.bbox[2]}d units, centered at world origin [0,0,0]. Complexity tolerance baseline is ${profile.bounding_box[0]}w x ${profile.bounding_box[1]}h x ${profile.bounding_box[2]}d units.`,
+      boundingBox: `All meshes must fit within a bounding box of ${boundingBox[0]}w x ${boundingBox[1]}h x ${boundingBox[2]}d units, centered at world origin [0,0,0].`,
       minParts: Number.isFinite(profile.max_parts)
         ? `The group MUST contain between ${profile.min_parts} and ${profile.max_parts} distinct <mesh> elements. A single mesh or box is never acceptable.`
         : `The group MUST contain at least ${profile.min_parts} distinct <mesh> elements. A single mesh or box is never acceptable.`,
@@ -61,7 +65,7 @@ export function buildSynthesisContract(params: {
         "The root <group> element MUST accept a forwarded ref: use React.forwardRef and apply the ref to the root <group ref={ref}>.",
       returnFormat:
         "Return ONLY the JSX - a single React.forwardRef component. No import statements. No export statements. No markdown. No explanation. Just the raw JSX starting with: const ComponentName = React.forwardRef((",
-      assemblyHint: `Category baseline: ${config.assemblyHint} Complexity tier requirements: ${profile.assembly_hint}`,
+      assemblyHint: buildAssemblyHint(category, complexityTier),
       styleHint: `Visual style is "${params.style}". Reflect this in proportions, details, and material choices. Futuristic = sharp angles + neon accents. Premium = smooth + chrome. Playful = rounded + bright colors. Minimal = clean + simple forms.`,
       accentColorHint: complexityTier === "low"
         ? `Primary accent color is ${params.accentColor}. Use it on at most 1 non-emissive accent surface. Do not add glow, emissive joints, or neon highlights at this tier.`

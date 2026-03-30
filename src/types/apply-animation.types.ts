@@ -12,6 +12,10 @@ export interface AnimationConfig {
   easing?: string;
   scale?: number;
   scale_range?: [number, number];
+  _derived?: {
+    scale?: number;
+    scale_range?: [number, number];
+  };
 }
 
 /**

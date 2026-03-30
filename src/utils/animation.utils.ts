@@ -18,7 +18,16 @@ export const ANIMATION_DEFAULTS: Record<AnimationType, AnimationConfig> = {
   rotate: { speed: 0.4, axis: "y", range: 6.28 },
   float: { speed: 0.9, axis: "y", amplitude: 0.18 },
   bounce: { speed: 1.2, axis: "y", amplitude: 0.25 },
-  pulse: { speed: 1.0, scale: 1.1 }
+  pulse: {
+    speed: 1.0,
+    amplitude: 0.1,
+    scale: 1.1,
+    scale_range: [1, 1.1],
+    _derived: {
+      scale: 1.1,
+      scale_range: [1, 1.1]
+    }
+  }
 } as const;
 
 export const CHANNEL_MAP: ChannelMap = {
@@ -48,6 +57,54 @@ function isValidScaleRange(value: unknown): value is [number, number] {
     isPositiveNumber(value[1]) &&
     value[1] >= value[0]
   );
+}
+
+function isDerivedConfig(
+  value: unknown
+): value is NonNullable<AnimationConfig["_derived"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  return (
+    (record.scale === undefined || isPositiveNumber(record.scale)) &&
+    (record.scale_range === undefined || isValidScaleRange(record.scale_range))
+  );
+}
+
+export function normalizePulseConfig(config: Partial<AnimationConfig> = {}): AnimationConfig {
+  const speed = isPositiveNumber(config.speed) ? config.speed : ANIMATION_DEFAULTS.pulse.speed ?? 1;
+  const amplitude =
+    isPositiveNumber(config.amplitude)
+      ? config.amplitude
+      : isValidScaleRange(config.scale_range)
+        ? Math.max(config.scale_range[1] - config.scale_range[0], 0.001)
+        : isPositiveNumber(config.scale)
+          ? Math.max(config.scale - 1, 0.001)
+          : ANIMATION_DEFAULTS.pulse.amplitude ?? 0.1;
+  const derivedScaleRange = isValidScaleRange(config.scale_range)
+    ? [config.scale_range[0], config.scale_range[1]] as [number, number]
+    : isDerivedConfig(config._derived) && isValidScaleRange(config._derived.scale_range)
+      ? [config._derived.scale_range[0], config._derived.scale_range[1]] as [number, number]
+      : [1, Number((1 + amplitude).toFixed(4))] as [number, number];
+  const derivedScale = isPositiveNumber(config.scale)
+    ? config.scale
+    : isDerivedConfig(config._derived) && isPositiveNumber(config._derived.scale)
+      ? config._derived.scale
+      : derivedScaleRange[1];
+
+  return {
+    speed,
+    amplitude,
+    scale: derivedScale,
+    scale_range: derivedScaleRange,
+    _derived: {
+      scale: derivedScale,
+      scale_range: derivedScaleRange
+    }
+  };
 }
 
 function getConfigScale(config: AnimationConfig | undefined) {
@@ -93,12 +150,31 @@ function sanitizeIncomingConfig(config: Partial<AnimationConfig>): AnimationConf
     sanitized.scale_range = [config.scale_range[0], config.scale_range[1]];
   }
 
+  if (isDerivedConfig(config._derived)) {
+    sanitized._derived = {};
+
+    if (isPositiveNumber(config._derived.scale)) {
+      sanitized._derived.scale = config._derived.scale;
+    }
+
+    if (isValidScaleRange(config._derived.scale_range)) {
+      sanitized._derived.scale_range = [config._derived.scale_range[0], config._derived.scale_range[1]];
+    }
+  }
+
   if (!sanitized.scale && sanitized.scale_range) {
     sanitized.scale = sanitized.scale_range[1];
   }
 
   if (!sanitized.scale_range && sanitized.scale) {
     sanitized.scale_range = [1, sanitized.scale];
+  }
+
+  if (!sanitized._derived && (sanitized.scale || sanitized.scale_range)) {
+    sanitized._derived = {
+      scale: sanitized.scale,
+      scale_range: sanitized.scale_range
+    };
   }
 
   return sanitized;
@@ -129,6 +205,10 @@ export function mergeAnimationConfig(
       (override ? undefined : isValidScaleRange(source?.scale_range) ? [source.scale_range[0], source.scale_range[1]] : undefined) ??
       sanitizedIncoming.scale_range ??
       [1, resolvedScale];
+    merged._derived = {
+      scale: merged.scale,
+      scale_range: merged.scale_range
+    };
   }
 
   return merged;
@@ -151,6 +231,14 @@ export function materializeAnimationConfig(
   type: AnimationType,
   config?: Partial<AnimationConfig>
 ): AnimationConfig {
+  if (type === "pulse") {
+    return normalizePulseConfig({
+      ...(config ?? {}),
+      speed: isPositiveNumber(config?.speed) ? config.speed : ANIMATION_DEFAULTS.pulse.speed,
+      amplitude: isPositiveNumber(config?.amplitude) ? config.amplitude : ANIMATION_DEFAULTS.pulse.amplitude
+    });
+  }
+
   return sanitizeIncomingConfig({
     ...ANIMATION_DEFAULTS[type],
     ...(config ?? {})

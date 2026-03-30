@@ -8,6 +8,7 @@ const tscBin = resolve(rootDir, "node_modules/typescript/bin/tsc");
 const jestBin = resolve(rootDir, "node_modules/jest/bin/jest.js");
 const healthSuites = [
   "tests/apply-animation.test.ts",
+  "tests/refine-prompt.test.ts",
   "tests/preview.test.ts",
   "tests/export-asset.test.ts",
   "tests/validate-scene.test.ts",

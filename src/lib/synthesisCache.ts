@@ -1,16 +1,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { join } from "node:path";
 
-
-import { fileURLToPath } from "node:url";
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const CACHE_DIR = join(__dirname, "..", ".synthesis_cache");
+const CACHE_DIR = join(process.cwd(), ".synthesis_cache");
 const CACHE_FILE = join(CACHE_DIR, "geometry_cache.json");
-
-console.log("[synthesisCache] CACHE_DIR resolved to:", CACHE_DIR);
-console.log("[synthesisCache] CACHE_FILE resolved to:", CACHE_FILE);
-console.log("[synthesisCache] cwd is:", process.cwd());
 
 export interface CacheEntry {
   jsx: string;
@@ -82,7 +75,6 @@ export function setCachedGeometry(
   key: string,
   entry: Omit<CacheEntry, "hit_count" | "created_at">
 ): void {
-  console.log("[synthesisCache] setCachedGeometry called:", key, entry.object_name);
   const store = loadCache();
 
   store[key] = {
@@ -92,7 +84,6 @@ export function setCachedGeometry(
   };
 
   saveCache(store);
-  console.log("[synthesisCache] saved to:", CACHE_FILE);
 }
 
 export function getCacheStats(): {

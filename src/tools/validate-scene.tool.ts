@@ -42,10 +42,6 @@ const validateSceneSchema = z.object({
     .describe(`When true, treat "warn" severity as "error". Useful for CI/CD pipelines or production exports.`)
 });
 
-function applyStrictSeverity(severity: Severity, strict: boolean) {
-  return strict && severity === "warn" ? "error" : severity;
-}
-
 function buildPassResult(
   rule_id: string,
   rule_name: string,
@@ -103,15 +99,24 @@ export function buildValidateSceneOutput(scene_data: SceneData, strict = false):
       return buildPassResult(definition.rule_id, definition.rule_name, definition.severity);
     }
 
+    const promoted = strict && validationFailure.severity === "warn";
+
     return {
       ...validationFailure,
-      severity: applyStrictSeverity(validationFailure.severity, strict)
+      severity: promoted ? "error" : validationFailure.severity,
+      ...(promoted
+        ? {
+            promoted: true,
+            original_severity: validationFailure.severity
+          }
+        : {})
     };
   });
 
   const passed = results.filter((result) => result.status === "pass").length;
   const warnings = results.filter((result) => result.status === "fail" && result.severity === "warn").length;
   const errors = results.filter((result) => result.status === "fail" && result.severity === "error").length;
+  const promotedToError = results.filter((result) => result.promoted === true).length;
   const is_valid = errors === 0;
   const errors_detail = results
     .filter((result) => result.status === "fail" && result.severity === "error")
@@ -126,12 +131,14 @@ export function buildValidateSceneOutput(scene_data: SceneData, strict = false):
     validation_id: randomUUID(),
     scene_id: typeof scene_data.scene_id === "string" ? scene_data.scene_id : "",
     validated_at: new Date().toISOString(),
+    strict_mode: strict,
     is_valid,
     summary: {
       total_rules_run: VALIDATOR_DEFINITIONS.length,
       passed,
       warnings,
       errors,
+      promoted_to_error: promotedToError,
       blocked: !is_valid
     },
     results,
