@@ -170,20 +170,25 @@ test("out_of_bounds_object returns a warning on O3", () => {
   assert.match(result.next_step, /READY WITH WARNINGS/);
 });
 
-test("pending_synthesis_contracts returns a warning on O5", () => {
+test("pending_synthesis_contracts blocks on O5 without strict mode", () => {
   const scene = buildPerfectScene();
   scene.scene_id = "pending_synthesis_contracts";
+  scene.objects[0].type = "synthesis_contract";
+  scene.objects[0].shape = "SYNTHESIS_REQUIRED";
   scene.objects[0].synthesis_contract = {
     __type: "SYNTHESIS_REQUIRED"
   };
   const result = validateScene(scene);
   const rule = getRule(result, "O5");
 
-  assert.equal(result.is_valid, true);
+  assert.equal(result.is_valid, false);
   assert.equal(rule.status, "fail");
-  assert.equal(rule.severity, "warn");
+  assert.equal(rule.severity, "error");
   assert.match(rule.message, /synthesize_geometry/);
-  assert.match(result.next_step, /READY WITH WARNINGS/);
+  assert.equal(
+    result.next_step,
+    "ERROR: Unresolved synthesis contracts detected. Call synthesize_geometry for each pending object before calling generate_r3f_code."
+  );
 });
 
 test("strict_mode_warns_become_errors blocks overlapping_objects", () => {

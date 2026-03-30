@@ -28,6 +28,14 @@ export interface GenerateR3FOptions {
 
 type MaterialCategory = "transmission" | "physical" | "emissive" | "standard";
 
+type SynthesizedComponentEntry = {
+  objectId: string;
+  object: SceneObject;
+  componentName: string;
+  refName: string;
+  definitionBlock: string;
+};
+
 function classifyMaterial(material: Material): MaterialCategory {
   if (
     material.type === "glass" ||
@@ -55,7 +63,7 @@ function classifyMaterial(material: Material): MaterialCategory {
 
 function sceneUsesTransmission(scene: SceneData): boolean {
   return scene.objects.some((object) => {
-    return object.type === "primitive" && classifyMaterial(object.material) === "transmission";
+    return classifyMaterial(object.material) === "transmission";
   });
 }
 
@@ -91,8 +99,32 @@ function getAnimatedObjectIdSet(objects: SceneObject[], animations: Animation[])
   return animatedIds;
 }
 
-function getRefName(index: number) {
-  return index === 0 ? "primaryRef" : `object${index + 1}Ref`;
+function buildRefNameMap(objects: SceneObject[]) {
+  const usedNames = new Set<string>();
+  const refNames = new Map<string, string>();
+
+  for (const [index, object] of objects.entries()) {
+    const rawName = object.name?.trim() || object.id || `object${index + 1}`;
+    const pascalName = toPascalCase(rawName);
+    const camelBase = pascalName ? `${pascalName.charAt(0).toLowerCase()}${pascalName.slice(1)}` : `object${index + 1}`;
+    const identifierBase = /^[A-Za-z_$]/.test(camelBase) ? camelBase : `object${index + 1}`;
+    let refName = `${identifierBase}Ref`;
+    let suffix = 2;
+
+    while (usedNames.has(refName)) {
+      refName = `${identifierBase}${suffix}Ref`;
+      suffix += 1;
+    }
+
+    usedNames.add(refName);
+    refNames.set(object.id, refName);
+  }
+
+  return refNames;
+}
+
+function getRefNameForObject(object: SceneObject, refNameMap: Map<string, string>) {
+  return refNameMap.get(object.id) ?? "objectRef";
 }
 
 function getAxisBaseValue(values: number[], axis: "x" | "y" | "z") {
@@ -130,6 +162,14 @@ function indent(code: string, spaces: number): string {
     .split("\n")
     .map((line) => (line.trim() ? pad + line : line))
     .join("\n");
+}
+
+function isVector3(value: unknown): value is [number, number, number] {
+  return Array.isArray(value) && value.length === 3 && value.every((entry) => typeof entry === "number" && Number.isFinite(entry));
+}
+
+function getSafeVector3(value: unknown, fallback: [number, number, number]): [number, number, number] {
+  return isVector3(value) ? value : fallback;
 }
 
 function buildMaterialJsx(material: Material, extraIndent = 0): string {
@@ -246,12 +286,16 @@ function buildEmissiveGlowLight(object: SceneObject): string {
 
   const glowColor = object.material.emissive || object.material.color;
   const intensity = Math.min((object.material.emissiveIntensity ?? 1) * 0.4, 1.5);
-  const [x, y, z] = object.position;
+  const [x, y, z] = getSafeVector3(object.position, [0, 0, 0]);
 
   return `      <pointLight position={[${x}, ${y}, ${z}]} color="${glowColor}" intensity={${intensity.toFixed(2)}} distance={3} decay={2} />`;
 }
 
-function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
+function buildAnimationHooks(
+  objects: SceneObject[],
+  animations: Animation[],
+  refNameMap: Map<string, string>
+) {
   return animations
     .map((animation) => {
       const targetObject = objects.find((object) => {
@@ -266,15 +310,17 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
         return "";
       }
 
-      const objectIndex = objects.findIndex((object) => object.id === targetObject.id);
-      const refName = getRefName(objectIndex);
+      const refName = getRefNameForObject(targetObject, refNameMap);
+      const basePosition = getSafeVector3(targetObject.position, [0, 0, 0]);
+      const baseRotation = getSafeVector3(targetObject.rotation, [0, 0, 0]);
+      const baseScale = getSafeVector3(targetObject.scale, [1, 1, 1]);
 
       if (animation.type === "float" && "amplitude" in animation.config) {
         return `
   useFrame((state) => {
     if (!${refName}.current) return;
     const t = state.clock.getElapsedTime() * ${animation.config.speed};
-    ${refName}.current.position.${animation.config.axis} = ${getAxisBaseValue(targetObject.position, animation.config.axis)} + Math.sin(t) * ${animation.config.amplitude};
+    ${refName}.current.position.${animation.config.axis} = ${getAxisBaseValue(basePosition, animation.config.axis)} + Math.sin(t) * ${animation.config.amplitude};
   });`;
       }
 
@@ -285,14 +331,14 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
         const axis = animation.config.axis;
         const speed = animation.config.speed;
         const range = animation.config.range;
-        const baseRotation = getAxisBaseValue(targetObject.rotation, axis);
+        const baseRotationValue = getAxisBaseValue(baseRotation, axis);
 
         if (isContinuous) {
           return `
   useFrame((state) => {
     if (!${refName}.current) return;
     const t = state.clock.getElapsedTime();
-    ${refName}.current.rotation.${axis} = ${baseRotation} + t * ${speed};
+    ${refName}.current.rotation.${axis} = ${baseRotationValue} + t * ${speed};
   });`;
         }
 
@@ -300,7 +346,7 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
   useFrame((state) => {
     if (!${refName}.current) return;
     const t = state.clock.getElapsedTime() * ${speed};
-    ${refName}.current.rotation.${axis} = ${baseRotation} + Math.sin(t) * ${range};
+    ${refName}.current.rotation.${axis} = ${baseRotationValue} + Math.sin(t) * ${range};
   });`;
       }
 
@@ -309,7 +355,7 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
   useFrame((state) => {
     if (!${refName}.current) return;
     const t = state.clock.getElapsedTime() * ${animation.config.speed};
-    ${refName}.current.position.${animation.config.axis} = ${getAxisBaseValue(targetObject.position, animation.config.axis)} + Math.abs(Math.sin(t)) * ${animation.config.amplitude};
+    ${refName}.current.position.${animation.config.axis} = ${getAxisBaseValue(basePosition, animation.config.axis)} + Math.abs(Math.sin(t)) * ${animation.config.amplitude};
   });`;
       }
 
@@ -323,9 +369,9 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
     const t = state.clock.getElapsedTime() * ${animation.config.speed};
     const pulseScale = ${minScale} + ((Math.sin(t) + 1) / 2) * ${scaleDelta};
     ${refName}.current.scale.set(
-      ${targetObject.scale[0]} * pulseScale,
-      ${targetObject.scale[1]} * pulseScale,
-      ${targetObject.scale[2]} * pulseScale
+      ${baseScale[0]} * pulseScale,
+      ${baseScale[1]} * pulseScale,
+      ${baseScale[2]} * pulseScale
     );
   });`;
       }
@@ -341,9 +387,9 @@ function buildAnimationHooks(objects: SceneObject[], animations: Animation[]) {
     const t = state.clock.getElapsedTime() * ${animation.config.speed};
     const pulseScale = ${minScale} + ((Math.sin(t) + 1) / 2) * ${scaleDelta};
     ${refName}.current.scale.set(
-      ${targetObject.scale[0]} * pulseScale,
-      ${targetObject.scale[1]} * pulseScale,
-      ${targetObject.scale[2]} * pulseScale
+      ${baseScale[0]} * pulseScale,
+      ${baseScale[1]} * pulseScale,
+      ${baseScale[2]} * pulseScale
     );
   });`;
       }
@@ -413,66 +459,87 @@ function toPlaceholderToken(value: string) {
     .replace(/^_+|_+$/g, "") || "OBJECT";
 }
 
-function injectRootBindingsIntoJsx(jsx: string) {
-  return jsx.replace(/<([A-Za-z][\w.]*)((?:\s[^<>]*?)?)>/, (match, tagName: string, rawAttributes = "") => {
-    const attributes = rawAttributes || "";
-    const hasRef = /\bref\s*=/.test(attributes);
-    const hasPropsSpread = /\{\s*\.\.\.\s*props\s*\}/.test(attributes);
-    const bindingParts: string[] = [];
-
-    if (!hasRef) {
-      bindingParts.push("ref={ref}");
-    }
-
-    if (!hasPropsSpread) {
-      bindingParts.push("{...props}");
-    }
-
-    if (bindingParts.length === 0) {
-      return match;
-    }
-
-    const separator = attributes.trim() ? " " : "";
-    return `<${tagName}${attributes}${separator}${bindingParts.join(" ")}>`;
-  });
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function normalizeInjectedComponent(componentName: string, jsxString: string) {
-  const trimmed = jsxString.trim();
+function extractForwardRefComponentName(jsxString: string) {
+  const match = jsxString.trim().match(/^const\s+([A-Za-z_$][\w$]*)\s*=\s*React\.forwardRef\b/);
 
-  if (/^const\s+\w+\s*=\s*React\.forwardRef/.test(trimmed)) {
-    return injectRootBindingsIntoJsx(trimmed.replace(
-      /^const\s+\w+\s*=\s*React\.forwardRef/,
-      `const ${componentName} = React.forwardRef`
-    ));
+  return match?.[1] ?? null;
+}
+
+function ensureComponentDisplayName(componentCode: string, componentName: string) {
+  const displayNamePattern = new RegExp(`\\b${escapeRegex(componentName)}\\.displayName\\s*=`);
+
+  if (displayNamePattern.test(componentCode)) {
+    return componentCode;
   }
 
-  if (trimmed.startsWith("<")) {
-    const normalizedJsx = injectRootBindingsIntoJsx(trimmed);
-    return `const ${componentName} = React.forwardRef((props, ref) => (
-${indent(normalizedJsx, 2)}
-));`;
+  return `${componentCode}\n${componentName}.displayName = "${componentName}";`;
+}
+
+function buildSynthesizedComponentEntries(
+  scene: SceneData,
+  synthesizedComponents: Record<string, string>,
+  refNameMap: Map<string, string>
+) {
+  const entries: SynthesizedComponentEntry[] = [];
+  const warnings: string[] = [];
+
+  for (const [objectId, jsxString] of Object.entries(synthesizedComponents)) {
+    const object = scene.objects.find((entry) => entry.id === objectId);
+
+    if (!object) {
+      warnings.push(`// Warning: synthesized component [${objectId}] has no matching object in scene_data; skipped.`);
+      continue;
+    }
+
+    const trimmed = jsxString.trim();
+    const extractedComponentName = extractForwardRefComponentName(trimmed);
+    const componentName = extractedComponentName ?? `${toPascalCase(object.name ?? object.id)}Geometry`;
+    const definitionBody = extractedComponentName
+      ? ensureComponentDisplayName(trimmed, componentName)
+      : `// Warning: synthesized component [${objectId}] does not start with "const "; emitted as-is for debugging.\n${trimmed}`;
+
+    entries.push({
+      objectId,
+      object,
+      componentName,
+      refName: getRefNameForObject(object, refNameMap),
+      definitionBlock: `// Auto-synthesized geometry for: ${object.name ?? object.id}\n${definitionBody}`
+    });
   }
 
-  return trimmed;
+  return {
+    entries,
+    warningComments: warnings,
+    entryByObjectId: new Map(entries.map((entry) => [entry.objectId, entry]))
+  };
 }
 
 function buildSceneGraph(
   scene: SceneData,
-  synthesizedComponents: Record<string, string>,
-  animatedObjectIds: Set<string>
+  synthesizedComponents: Map<string, SynthesizedComponentEntry>,
+  animatedObjectIds: Set<string>,
+  refNameMap: Map<string, string>
 ) {
   return scene.objects
-    .map((object, index) => {
-      const refProp = animatedObjectIds.has(object.id) ? `ref={${getRefName(index)}} ` : "";
-      const position = `position={${JSON.stringify(object.position)}}`;
-      const rotation = `rotation={${JSON.stringify(object.rotation)}}`;
-      const scale = `scale={${JSON.stringify(object.scale)}}`;
+    .map((object) => {
+      const synthesizedEntry = synthesizedComponents.get(object.id);
+      const refName = synthesizedEntry
+        ? synthesizedEntry.refName
+        : animatedObjectIds.has(object.id)
+          ? getRefNameForObject(object, refNameMap)
+          : null;
+      const refProp = refName ? `ref={${refName}} ` : "";
+      const position = `position={${JSON.stringify(getSafeVector3(object.position, [0, 0, 0]))}}`;
+      const rotation = `rotation={${JSON.stringify(getSafeVector3(object.rotation, [0, 0, 0]))}}`;
+      const scale = `scale={${JSON.stringify(getSafeVector3(object.scale, [1, 1, 1]))}}`;
 
-      if (isSynthesisObject(object) && synthesizedComponents[object.id]) {
-        const componentName = `${toPascalCase(object.name ?? object.id)}Geometry`;
+      if (synthesizedEntry) {
         const lines = [
-          `      <${componentName} ${refProp}${position} ${rotation} ${scale} />`
+          `      <${synthesizedEntry.componentName} ${refProp}${position} ${rotation} ${scale} />`
         ];
         const glowLight = buildEmissiveGlowLight(object);
 
@@ -505,10 +572,15 @@ function buildSceneGraph(
     .join("\n");
 }
 
-function buildImports(hasAnimations: boolean, hasTransmission: boolean, typing: R3FTypingMode) {
+function buildImports(
+  hasAnimations: boolean,
+  hasTransmission: boolean,
+  hasRefs: boolean,
+  typing: R3FTypingMode
+) {
   const reactImports = ["Suspense"];
 
-  if (hasAnimations) {
+  if (hasRefs) {
     reactImports.push("useRef");
   }
 
@@ -641,28 +713,38 @@ function assembleR3FComponent(
 ): AssembledR3FOutput {
   const animationList = Array.isArray(scene.animations) ? scene.animations : [];
   const animatedObjectIds = getAnimatedObjectIdSet(scene.objects, animationList);
-  const hasAnimations = animatedObjectIds.size > 0;
+  const refNameMap = buildRefNameMap(scene.objects);
+  const synthesizedComponentEntries = buildSynthesizedComponentEntries(scene, synthesizedComponents, refNameMap);
+  const refObjectIds = new Set(animatedObjectIds);
   const hasTransmission = sceneUsesTransmission(scene);
+
+  for (const entry of synthesizedComponentEntries.entries) {
+    refObjectIds.add(entry.objectId);
+  }
+
+  const hasAnimations = animatedObjectIds.size > 0;
+  const hasRefs = refObjectIds.size > 0;
   const refType = typing === "typescript" ? "<ObjectRef | null>" : "";
   const refDeclarations = scene.objects
-    .map((object, index) => {
-      return animatedObjectIds.has(object.id) ? `  const ${getRefName(index)} = useRef${refType}(null);` : "";
+    .map((object) => {
+      return refObjectIds.has(object.id) ? `  const ${getRefNameForObject(object, refNameMap)} = useRef${refType}(null);` : "";
     })
     .filter(Boolean)
     .join("\n");
 
-  const animationHooks = buildAnimationHooks(scene.objects, animationList);
+  const animationHooks = buildAnimationHooks(scene.objects, animationList, refNameMap);
   const lightingJsx = buildLightingJsx(scene);
-  const sceneGraph = buildSceneGraph(scene, synthesizedComponents, animatedObjectIds);
-  const injectedComponents = Object.entries(synthesizedComponents)
-    .map(([objectId, jsxString]) => {
-      const object = scene.objects.find((entry) => entry.id === objectId);
-      const componentName = `${toPascalCase(object?.name ?? objectId)}Geometry`;
-      return `// Auto-synthesized geometry for: ${object?.name ?? objectId}
-${normalizeInjectedComponent(componentName, jsxString)}`;
-    })
-    .join("\n\n");
-  const imports = buildImports(hasAnimations, hasTransmission, typing);
+  const sceneGraph = buildSceneGraph(
+    scene,
+    synthesizedComponentEntries.entryByObjectId,
+    animatedObjectIds,
+    refNameMap
+  );
+  const injectedComponents = [
+    ...synthesizedComponentEntries.warningComments,
+    ...synthesizedComponentEntries.entries.map((entry) => entry.definitionBlock)
+  ].join("\n\n");
+  const imports = buildImports(hasAnimations, hasTransmission, hasRefs, typing);
   const typeDefinitions = buildTypeDefinitions(typing);
   const propTypesBlock = buildPropTypesBlock(typing);
   const useClientDirective = framework === "nextjs" ? `"use client";\n\n` : "";
