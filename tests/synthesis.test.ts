@@ -402,6 +402,108 @@ test("handleGenerateR3FCode degrades to a placeholder when a synthesized compone
   assert.match(result.r3f_code, /meshStandardMaterial color="#ff4444" wireframe/);
 });
 
+test("handleGenerateR3FCode returns partial success when one synthesized component is valid and one is broken", () => {
+  const result = runJson(`
+    import { buildSynthesisContract } from "${DIST_ROOT}/lib/synthesisContract.js";
+    import { handleGenerateR3FCode } from "${DIST_ROOT}/services/r3fGenerator.js";
+
+    const watchContract = buildSynthesisContract({
+      objectId: "watch_1",
+      objectName: "watch",
+      style: "premium",
+      materialPreset: "metal_chrome",
+      baseColor: "#f6f7fb",
+      accentColor: "#c6924c",
+      complexity: "medium"
+    });
+
+    const walletContract = buildSynthesisContract({
+      objectId: "wallet_1",
+      objectName: "wallet",
+      style: "premium",
+      materialPreset: "metal_chrome",
+      baseColor: "#f6f7fb",
+      accentColor: "#c6924c",
+      complexity: "medium"
+    });
+
+    const scene = {
+      scene_id: "scene_mixed_synthesized_components",
+      metadata: {
+        title: "Mixed Components",
+        use_case: "advertisement",
+        style: "premium",
+        created_at: "2026-04-01T00:00:00.000Z"
+      },
+      environment: {
+        background: {
+          type: "color",
+          value: "#050a15"
+        }
+      },
+      camera: {
+        type: "perspective",
+        position: [0, 2, 5],
+        fov: 45,
+        target: [0, 0, 0]
+      },
+      lighting: [],
+      objects: [
+        {
+          id: "watch_1",
+          type: "synthesis_contract",
+          name: "watch",
+          shape: "SYNTHESIS_REQUIRED",
+          synthesis_contract: watchContract,
+          position: [-0.4, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          material: {
+            type: "standard",
+            color: "#f6f7fb"
+          }
+        },
+        {
+          id: "wallet_1",
+          type: "synthesis_contract",
+          name: "wallet",
+          shape: "SYNTHESIS_REQUIRED",
+          synthesis_contract: walletContract,
+          position: [0.5, 0, 0],
+          rotation: [0, 0, 0],
+          scale: [1, 1, 1],
+          material: {
+            type: "standard",
+            color: "#f6f7fb"
+          }
+        }
+      ],
+      animations: []
+    };
+
+    console.log(JSON.stringify(handleGenerateR3FCode(scene, {
+      framework: "plain",
+      typing: "none",
+      synthesized_components: {
+        watch_1: \`const WatchGeometry = React.forwardRef((props, ref) => (
+  <group ref={ref}>
+    <mesh>
+      <boxGeometry args={[0.2, 0.2, 0.2]} />
+      <meshStandardMaterial color="#f6f7fb" />
+    </mesh>
+  </group>
+));\`,
+        wallet_1: "BROKEN JSX >>>{{"
+      }
+    })));
+  `);
+
+  assert.equal(result.status, "PARTIAL_SUCCESS");
+  assert.equal(result.placeholder_object_count, 1);
+  assert.ok(result.warnings.length >= 1);
+  assert.match(result.r3f_code, /color="#ff4444"/);
+});
+
 test("handleGenerateR3FCode falls back to a placeholder scene on internal failure", () => {
   const result = runJson(`
     import { handleGenerateR3FCode } from "${DIST_ROOT}/services/r3fGenerator.js";
